@@ -151,8 +151,9 @@ function layout() {
     // 에이전트가 빈 탭에서 막 시작한 about:blank는 덮지 않는다 — 새 탭 화면이 보이다가 페이지가 뜨면 바뀐다
     const show = t.id === activeId && !!card && !ui.overlay && !ui.pickProfile && t.view.webContents.getURL() !== 'about:blank';
     t.view.setVisible(show);
-    // 숨긴 탭도 같은 크기로 — 뒤에서 일하는 에이전트가 0×0 화면에서 페이지를 읽지 않게
-    if (card) t.view.setBounds(card);
+    // 숨긴 탭도 같은 크기로(뒤에서 일하는 에이전트가 0×0 화면에서 읽지 않게) — 단 창 밖에 둔다.
+    // 숨긴 화면이 카드 자리에 겹쳐 있으면 손잡이·메리 화면의 마우스를 가로챌 수 있다
+    if (card) t.view.setBounds(show ? card : { ...card, x: -card.width - 100 });
   }
 }
 
