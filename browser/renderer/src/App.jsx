@@ -10,6 +10,7 @@ import NewTab from './NewTab.jsx';
 import WorkMap from './WorkMap.jsx';
 import Merry from './Merry.jsx';
 import RoomPanel from './Room.jsx';
+import Resizer from './Resizer.jsx';
 import { a2a, useStore, get, openRoom, openTeam } from './store.js';
 import { WALLS } from './format.js';
 
@@ -45,6 +46,7 @@ export default function App() {
   const card = useRef(null);
   useReportRects(card);
   const [findOpen, setFindOpen] = useState(false);
+  const [drag, setDrag] = useState(null);           // 끄는 중의 폭 { sidebar | panel }
   const activeTabId = useStore((s) => s.S?.tabs.find((t) => t.active)?.id);
   useEffect(() => { setFindOpen(false); }, [activeTabId]);      // 탭을 바꾸면 찾기 바를 닫는다
 
@@ -67,7 +69,13 @@ export default function App() {
 
   if (!S) return <div className="fixed inset-0 wall-sky" />;
   const cur = S.tabs.find((t) => t.active);
-  const cols = `${S.sidebarOpen ? 256 : 0}px minmax(0,1fr) ${S.panelOpen ? 408 : 0}px`;
+  // 좌우 폭 — 끌어서 조절(설정에 저장). 끄는 동안엔 화면에서만 바꾸고 놓을 때 저장
+  const SW = { def: 256, min: 200, max: 440 }, PW = { def: 408, min: 320, max: 760 };
+  const clamp = (v, r) => Math.round(Math.min(r.max, Math.max(r.min, v)));
+  const sideW = drag?.sidebar ?? S.prefs?.sidebarWidth ?? SW.def;
+  const panelW = drag?.panel ?? S.prefs?.panelWidth ?? PW.def;
+  const cols = `${S.sidebarOpen ? sideW : 0}px minmax(0,1fr) ${S.panelOpen ? panelW : 0}px`;
+  const base = { sidebar: S.prefs?.sidebarWidth ?? SW.def, panel: S.prefs?.panelWidth ?? PW.def };
 
   return (
     <>
@@ -88,6 +96,18 @@ export default function App() {
         </main>
         {S.panelOpen ? <RoomPanel /> : <div />}
       </div>
+      {S.sidebarOpen && (
+        <Resizer id="resize-sidebar" className="fixed bottom-0 top-0" style={{ left: sideW - 4 }}
+                 onDrag={(dx) => setDrag({ sidebar: clamp(base.sidebar + dx, SW) })}
+                 onEnd={(dx) => { a2a.send('prefs:set', 'sidebarWidth', clamp(base.sidebar + dx, SW)); setDrag(null); }}
+                 onReset={() => a2a.send('prefs:set', 'sidebarWidth', SW.def)} />
+      )}
+      {S.panelOpen && (
+        <Resizer id="resize-panel" className="fixed bottom-0 top-0" style={{ right: panelW - 4 }}
+                 onDrag={(dx) => setDrag({ panel: clamp(base.panel - dx, PW) })}
+                 onEnd={(dx) => { a2a.send('prefs:set', 'panelWidth', clamp(base.panel - dx, PW)); setDrag(null); }}
+                 onReset={() => a2a.send('prefs:set', 'panelWidth', PW.def)} />
+      )}
       {S.pickProfile && <ProfilePicker />}
     </>
   );

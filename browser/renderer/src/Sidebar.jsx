@@ -188,7 +188,7 @@ export default function Sidebar({ glass }) {
         )}>
           {importMsg && <div className={`px-2.5 py-1 text-[11.5px] ${importMsg.warn ? 'text-warn' : 'text-sub'}`}>{importMsg.text}</div>}
           {(moreBm ? S.bookmarks : S.bookmarks.slice(0, BM_SHOW)).map((b) => (
-            <button key={b.url} title={b.url} className={rowCls(false)} onClick={() => a2a.send('bookmark:open', b.url)}>
+            <button key={b.url} title={b.url} className={rowCls(S.tabs.find((t) => t.active)?.url === b.url)} onClick={() => a2a.send('bookmark:open', b.url)}>
               <Favicon url={b.url} favicon={b.favicon} title={b.title} />
               <span className="min-w-0 flex-1 truncate">{b.title}</span>
               <CloseX title="즐겨찾기에서 빼기" onClick={() => a2a.send('bookmark:remove', b.url)} />
@@ -292,7 +292,7 @@ export default function Sidebar({ glass }) {
           <span className="min-w-0 flex-1 truncate">다운로드</span>
           <kbd className="font-sans text-[11px] text-faint opacity-0 group-hover:opacity-100">⌥⌘L</kbd>
         </button>
-        <button id="open-map" className={rowCls(!!S.tabs.find((t) => t.active)?.internal)} onClick={() => a2a.send('map:open')}>
+        <button id="open-map" className={rowCls(S.tabs.find((t) => t.active)?.internal === 'map')} onClick={() => a2a.send('map:open')}>
           <Icon name="graph" className="size-4 text-sub" />
           <span className="min-w-0 flex-1 truncate">업무 지도</span>
           <kbd className="font-sans text-[11px] text-faint opacity-0 group-hover:opacity-100">⇧⌘G</kbd>

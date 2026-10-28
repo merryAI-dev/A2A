@@ -8,6 +8,7 @@ import { a2a } from './store.js';
 import { ago as agoMs } from './format.js';
 import './merry.css';
 import DocEditor from './merry/DocEditor.jsx';
+import Resizer from './Resizer.jsx';
 
 const ago = (iso) => (iso ? agoMs(Date.parse(iso)) : '');
 
@@ -190,7 +191,7 @@ function AskCard({ m, dealId, onDone }) {
   );
 }
 
-function CopilotPanel({ data, live, target, setTarget, run, refresh }) {
+function CopilotPanel({ data, live, target, setTarget, run, refresh, chatW }) {
   const { deal, chat, copilot, template } = data;
   const [text, setText] = useState('');
   const [drag, setDrag] = useState(false);
@@ -219,9 +220,10 @@ function CopilotPanel({ data, live, target, setTarget, run, refresh }) {
   });
 
   return (
-    <aside className={`relative flex w-[380px] shrink-0 flex-col border-l border-card-line ${drag ? 'bg-info/[.04]' : ''}`}
+    <aside id="merry-chat" className={`relative flex shrink-0 flex-col border-l border-card-line ${drag ? 'bg-info/[.04]' : ''}`} style={{ width: chatW?.w ?? 380 }}
            onDragOver={(e) => { e.preventDefault(); setDrag(true); }} onDragLeave={() => setDrag(false)}
            onDrop={(e) => { e.preventDefault(); setDrag(false); files(e.dataTransfer.files); }}>
+      {chatW && <Resizer id="resize-merry-chat" className="absolute -left-[4px] bottom-0 top-0" onDrag={(dx) => chatW.drag(dx, -1)} onEnd={(dx) => chatW.end(dx, -1)} onReset={chatW.reset} />}
       <div className="flex items-center gap-2 border-b border-card-line px-3.5 py-2.5">
         <div className="text-[13px] font-bold">메리와 함께 쓰기</div>
         {busy && <span className="flex min-w-0 items-center gap-1 truncate text-[11.5px] text-card-sub"><Icon name="spark" className="size-3 animate-twinkle" />{waiting ? '답을 기다리는 중' : copilot.busy}</span>}
@@ -306,7 +308,7 @@ function CopilotPanel({ data, live, target, setTarget, run, refresh }) {
   );
 }
 
-function ReportTab({ data, live, target, setTarget, run, refresh }) {
+function ReportTab({ data, live, target, setTarget, run, refresh, chatW }) {
   const { deal, sections, template, vars } = data;
   const [fact, setFact] = useState(null);
   const order = useRef(new Map());
@@ -362,7 +364,7 @@ function ReportTab({ data, live, target, setTarget, run, refresh }) {
           </div>
         )}
       </div>
-      <CopilotPanel data={data} live={live} target={target} setTarget={setTarget} run={run} refresh={refresh} />
+      <CopilotPanel data={data} live={live} target={target} setTarget={setTarget} run={run} refresh={refresh} chatW={chatW} />
     </div>
   );
 }
@@ -671,7 +673,23 @@ function PackTab({ data, busy, run, refresh }) {
 
 const short = (s, n) => { s = String(s ?? ''); return s.length > n ? `${s.slice(0, n)}…` : s; };
 
+// 메리 안의 좌우 폭(투자 건 목록·대화창) — 이 화면에만 기억한다(localStorage, 실패해도 기본 폭)
+function useWidth(key, def, min, max) {
+  const read = () => { try { const v = Number(localStorage.getItem(key)); return Number.isFinite(v) && v >= min && v <= max ? v : def; } catch { return def; } };
+  const [w, setW] = useState(read);
+  const [live, setLive] = useState(null);
+  const clamp = (v) => Math.round(Math.min(max, Math.max(min, v)));
+  return {
+    w: live ?? w,
+    drag: (dx, dir = 1) => setLive(clamp(w + dir * dx)),
+    end: (dx, dir = 1) => { const v = clamp(w + dir * dx); setW(v); setLive(null); try { localStorage.setItem(key, String(v)); } catch { /* 저장 못 해도 이번엔 적용 */ } },
+    reset: () => { setW(def); setLive(null); try { localStorage.removeItem(key); } catch { /* 그만 */ } },
+  };
+}
+
 export default function Merry() {
+  const listW = useWidth('merry.listWidth', 230, 180, 420);
+  const chatW = useWidth('merry.chatWidth', 380, 300, 720);
   const [deals, setDeals] = useState([]);
   const [sel, setSel] = useState(null);
   const [data, setData] = useState(null);
@@ -728,7 +746,8 @@ export default function Merry() {
   // 카드 크기에 고정(absolute) — 셸 격자 행은 높이 제한이 없어서, 흐름에 두면 긴 문서만큼 카드가 늘어나 스크롤이 안 된다
   return (
     <div className="absolute inset-0 flex min-h-0">
-      <aside className="flex w-[230px] shrink-0 flex-col border-r border-card-line">
+      <aside className="relative flex shrink-0 flex-col border-r border-card-line" style={{ width: listW.w }}>
+        <Resizer id="resize-merry-list" className="absolute -right-[4px] bottom-0 top-0" onDrag={(dx) => listW.drag(dx)} onEnd={(dx) => listW.end(dx)} onReset={listW.reset} />
         <div className="flex items-center gap-2 px-4 pb-2 pt-4">
           <div className="text-[16px] font-extrabold tracking-tight">메리</div>
           <div className="text-[11px] text-card-faint">투자 딜룸</div>
@@ -808,7 +827,7 @@ export default function Merry() {
               {err && !busy && <span className="ml-auto pb-2 text-[12px] text-accent">{err}</span>}
             </nav>
           </header>
-          {tab === 'report' && <ReportTab data={data} live={live} target={target} setTarget={setTarget} run={run} refresh={refresh} />}
+          {tab === 'report' && <ReportTab data={data} live={live} target={target} setTarget={setTarget} run={run} refresh={refresh} chatW={chatW} />}
           {tab === 'discuss' && <DiscussTab data={data} busy={busy} refresh={refresh} />}
           {tab === 'facts' && <FactsTab data={data} busy={busy} run={run} refresh={refresh} />}
           {tab === 'pack' && <PackTab key={data.deal.packs.length} data={data} busy={busy} run={run} refresh={refresh} />}

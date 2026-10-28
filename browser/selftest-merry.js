@@ -21,6 +21,40 @@ module.exports = async function merrySelftest(ctx, step, dir, winShot) {
   await js(`a2a.send('bookmark:open', 'a2a://메리')`);
   const opened = await until(() => js(`document.body.innerText.includes('투자 딜룸')`));
   step('merry-open', !!opened, opened ? 'a2a://메리 화면' : '안 열림');
+  // 메리에서 홈 → 새 탭 화면(메리를 빈 탭으로 잘못 보지 않는지), 다시 메리
+  await js(`a2a.send('nav:home')`);
+  const home = await until(() => js(`!document.getElementById('card')?.className.includes('bg-card') && !document.body.innerText.includes('투자 딜룸')`), 4000);
+  step('merry-home', !!home, home ? '홈 → 새 탭 화면' : '홈을 눌러도 메리에 남음');
+  await js(`a2a.send('bookmark:open', 'a2a://메리')`);
+  await until(() => js(`document.body.innerText.includes('투자 딜룸')`));
+  // 주소창 a2a:// → 우리 화면, 사이드바·대화창 폭 끌기, 우리 화면 즐겨찾기 별
+  await js(`a2a.send('nav:home')`); await sleep(400);
+  await js(`a2a.send('nav:go', 'a2a://업무지도')`);
+  const mapOk = await until(() => js(`!!document.getElementById('workmap')`), 4000);
+  step('addr-internal', !!mapOk, mapOk ? 'a2a://업무지도 → 업무 지도' : '주소창 a2a:// 안 됨');
+  await js(`a2a.send('nav:go', '메리')`);
+  await until(() => js(`document.body.innerText.includes('투자 딜룸')`));
+  const dragBy = async (sel, dx) => {
+    const r = await js(`(() => { const e = document.querySelector(${JSON.stringify(sel)}); if (!e) return null; const b = e.getBoundingClientRect(); return { x: Math.round(b.left + b.width / 2), y: Math.round(b.top + b.height / 2) }; })()`);
+    if (!r) return false;
+    sh.sendInputEvent({ type: 'mouseDown', x: r.x, y: r.y, button: 'left', clickCount: 1 });
+    for (let i = 1; i <= 5; i++) { sh.sendInputEvent({ type: 'mouseMove', x: r.x + Math.round((dx * i) / 5), y: r.y, modifiers: ['leftButtonDown'] }); await sleep(40); }
+    sh.sendInputEvent({ type: 'mouseUp', x: r.x + dx, y: r.y, button: 'left', clickCount: 1 });
+    await sleep(500);
+    return true;
+  };
+  const sideBefore = await js(`document.querySelector('aside')?.getBoundingClientRect().width`);
+  await dragBy('#resize-sidebar', 80);
+  const sideAfter = await js(`document.querySelector('aside')?.getBoundingClientRect().width`);
+  step('resize-sidebar', sideAfter > sideBefore + 40, `사이드바 ${Math.round(sideBefore)} → ${Math.round(sideAfter)}px`);
+  // 사이드바엔 열린 탭 줄도 같은 주소를 단다 — 개수로 센다
+  const bmCount = () => js(`[...document.querySelectorAll('aside button')].filter((b) => b.title === 'a2a://메리').length`);
+  const n0 = await bmCount();
+  await js(`a2a.send('bookmark:toggle')`); await sleep(400);
+  const bmOff = (await bmCount()) === n0 - 1;
+  await js(`a2a.send('bookmark:toggle')`); await sleep(400);
+  const bmOn = (await bmCount()) === n0;
+  step('internal-bookmark', bmOff && bmOn, `별로 메리 즐겨찾기 빼기 ${bmOff} · 다시 넣기 ${bmOn}`);
 
   // 2) 투자 건 + 논의·결정 + 가정
   const deal = await inv('create', { company: '샘플수산', fund: '샘플 임팩트 펀드', amount: 300000000, method: '신주 / RCPS', vision: '지역 수산물로 지속가능한 가공 밸류체인을 만든다' });
@@ -126,6 +160,11 @@ module.exports = async function merrySelftest(ctx, step, dir, winShot) {
     await winShot(ctx, path.join(dir, `merry-${i}-${key}.png`));
     if (pdf) step(`merry-page-${key}`, !!has, has ? '본문 있음' : '본문 없음');
   }
+  await until(() => js(`!!document.getElementById('merry-chat')`), 4000);
+  const chatBefore = await js(`document.getElementById('merry-chat')?.getBoundingClientRect().width`);
+  await dragBy('#resize-merry-chat', -100);
+  const chatAfter = await js(`document.getElementById('merry-chat')?.getBoundingClientRect().width`);
+  step('resize-chat', chatAfter > chatBefore + 50, `대화창 ${Math.round(chatBefore)} → ${Math.round(chatAfter)}px · ${await js(`[document.body.innerText.includes('투자 딜룸'), document.body.innerText.includes('메리와 함께 쓰기'), !!document.getElementById('merry-chat'), document.querySelectorAll('nav button').length].join(',')`)}`);
   await clickTab('논의');
   await sleep(500);
   await winShot(ctx, path.join(dir, 'merry-4-discuss.png'));

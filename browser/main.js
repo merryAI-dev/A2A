@@ -1019,10 +1019,19 @@ on('tab:close', (id) => closeTab(id));
 on('tab:reopen', () => reopenClosed());
 on('tab:move', (id, to) => moveTab(id, to));
 on('tab:switch', (id) => switchTab(id));
-on('nav:go', (input) => go(resolveInput(input)));
+// 주소창 — a2a://메리, a2a://업무지도(또는 그냥 "메리", "업무지도")는 우리 화면으로
+const internalOf = (input) => {
+  const v = String(input || '').trim().replace(/\/+$/, '');
+  return Object.keys(INTERNAL).find((k) => INTERNAL[k].url === v || INTERNAL[k].url === `a2a://${v}` || decodeURIComponent(INTERNAL[k].url) === v) || null;
+};
+on('nav:go', (input) => { const k = internalOf(input); if (k) openInternal(k); else go(resolveInput(input)); });
 on('nav:back', () => active()?.view?.webContents.navigationHistory.goBack());
 on('nav:forward', () => active()?.view?.webContents.navigationHistory.goForward());
-on('nav:reload', () => active()?.view?.webContents.reload());
+on('nav:reload', () => {
+  const t = active();
+  if (t?.internal) { shell?.webContents.send('onto:changed'); shell?.webContents.send('invest:changed'); return; }   // 우리 화면은 데이터를 다시 읽는다
+  t?.view?.webContents.reload();
+});
 on('nav:home', goHome);
 ipcMain.handle('history:query', (e, q) => (e.sender === shell?.webContents ? history.query(typeof q === 'string' ? q.slice(0, 200) : '') : []));
 ipcMain.handle('history:suggest', (e, q) => {
@@ -1102,6 +1111,9 @@ on('prefs:set', (key, value) => {
   else if (key === 'askProfile' && typeof value === 'boolean') store.prefs.askProfile = value;
   else if ((key === 'worktype' || key === 'recall') && typeof value === 'boolean') store.prefs[key] = value;
   else if (key === 'agentModel' && Object.hasOwn(MODELS, value)) store.prefs.agentModel = value;
+  // 좌우 폭(끌어서 조절) — 화면이 깨지지 않는 범위로만
+  else if (key === 'sidebarWidth' && Number.isFinite(value)) store.prefs.sidebarWidth = Math.round(Math.min(440, Math.max(200, value)));
+  else if (key === 'panelWidth' && Number.isFinite(value)) store.prefs.panelWidth = Math.round(Math.min(760, Math.max(320, value)));
   else if (key === 'sync' && SYNC_MODES.includes(value)) {
     store.prefs.sync = value;
     if (value === 'off') sync?.stop(); else { sync?.start(); setTimeout(() => sync?.run(), 300); }
@@ -1155,7 +1167,7 @@ on('bookmark:remove', (url) => {
   pushState();
 });
 on('bookmark:open', (url) => {
-  if (url === INTERNAL.merry.url) { openInternal('merry'); return; }
+  { const k = internalOf(url); if (k) { openInternal(k); return; } }
   const u = httpUrl(url);
   if (!u) return;
   if (active() && !active().view) go(u); else openTab(u);
@@ -1265,7 +1277,7 @@ function zoom(dir) {
 
 // 홈 = 새 탭 화면. 비어 있는 새 탭이 있으면 거기로, 없으면 하나 연다.
 function goHome() {
-  const empty = [...tabs].reverse().find((t) => !t.view && !t.pending);   // 복원 대기 탭은 빈 탭이 아니다
+  const empty = [...tabs].reverse().find((t) => !t.view && !t.pending && !t.internal);   // 복원 대기 탭·메리·업무 지도 같은 우리 화면은 빈 탭이 아니다
   if (empty) switchTab(empty.id); else openTab(null);
 }
 
@@ -1277,6 +1289,14 @@ function toggleSidebar() {
 
 function toggleBookmark() {
   const t = active();
+  if (t?.internal) {                    // 메리·업무 지도도 즐겨찾기에 넣고 뺄 수 있다
+    const { url, title } = INTERNAL[t.internal];
+    const i = store.bookmarks.findIndex((b) => b.url === url);
+    if (i >= 0) store.bookmarks.splice(i, 1); else store.bookmarks.push({ url, title });
+    saveStore();
+    pushState();
+    return;
+  }
   const url = t?.view?.webContents.getURL();
   if (!url || !httpUrl(url)) return;
   const i = store.bookmarks.findIndex((b) => b.url === url);
