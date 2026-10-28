@@ -151,7 +151,8 @@ function layout() {
     // 에이전트가 빈 탭에서 막 시작한 about:blank는 덮지 않는다 — 새 탭 화면이 보이다가 페이지가 뜨면 바뀐다
     const show = t.id === activeId && !!card && !ui.overlay && !ui.pickProfile && t.view.webContents.getURL() !== 'about:blank';
     t.view.setVisible(show);
-    if (show) t.view.setBounds(card);
+    // 숨긴 탭도 같은 크기로 — 뒤에서 일하는 에이전트가 0×0 화면에서 페이지를 읽지 않게
+    if (card) t.view.setBounds(card);
   }
 }
 
@@ -345,14 +346,14 @@ function openTab(url, { background = false } = {}) {
 // 에이전트 결과 페이지 — 우리 React 렌더러(ui/page.html)에 블록 명세를 해시로 넘겨 새 탭에 연다.
 // 탭은 일반 웹 탭과 같은 격리(preload 없음, sandbox)이고, 명세는 agent.js가 모양을 검사한 것만 온다.
 const PAGE_FILE = path.join(__dirname, 'ui', 'page.html');
-function openPageTab(spec) {
+function openPageTab(spec, { background = false } = {}) {
   const t = { id: nextId++, view: null, favicon: '' };
   tabs.push(t);
   const wc = attachView(t, null);
   // 결과 페이지도 브라우저와 같은 톤으로(어두운 배경화면이면 어둡게) — 대화하다 갑자기 다른 화면이 되지 않게
   const tone = ['dusk', 'graphite'].includes(store.wallpaper) ? 'dark' : 'light';
   wc.loadFile(PAGE_FILE, { hash: Buffer.from(JSON.stringify({ spec, tone })).toString('base64url') }).catch(() => {});
-  activeId = t.id;
+  if (!background || activeId === null) activeId = t.id;
   layout();
   pushState();
   return { id: t.id, webContents: wc };
@@ -593,7 +594,7 @@ function makeKnowledge() {
       delegate: async (text) => {
         if (agent.running || agentStarting) throw new Error('홈 에이전트가 다른 일을 하는 중이에요');
         const before = store.tasks[0]?.id;
-        await runAgent(text, { fresh: true });
+        await runAgent(text, { fresh: true, background: true });
         const t = store.tasks[0];
         if (!t || t.id === before) throw new Error('홈 에이전트를 시작하지 못했어요');
         return { taskId: t.id, status: t.status, answer: String(t._text || t.summary || '').slice(0, 6000) };
@@ -788,13 +789,13 @@ async function channelContext(room, sources = []) {
 
 // 시작 준비(맥락 읽기·네트워크) 사이에 두 번째 요청이 끼어들지 못하게 — 끼어들면 한쪽이 조용히 사라졌다
 let agentStarting = false;
-async function runAgent(text, { fresh = false, mentions = [], room = null } = {}) {
+async function runAgent(text, { fresh = false, mentions = [], room = null, background = false } = {}) {
   text = String(text || '').trim();
   if (!text || agent.running || agentStarting) return;
   agentStarting = true;
   pushState();
   let prepared;
-  try { prepared = await prepareRun(text, { fresh, mentions, room }); }
+  try { prepared = await prepareRun(text, { fresh, mentions, room, background }); }
   finally { agentStarting = false; }
   if (!prepared) return;
   const { task, prompt, inChannel } = prepared;
@@ -815,7 +816,7 @@ async function runAgent(text, { fresh = false, mentions = [], room = null } = {}
   }
 }
 
-async function prepareRun(text, { fresh, mentions, room }) {
+async function prepareRun(text, { fresh, mentions, room, background = false }) {
   const { extra, labels, sources } = await mentionContext(mentions);
   const inChannel = room && Number.isInteger(room.cid) && typeof room.name === 'string';
   const isNew = fresh || !currentTask || inChannel;
@@ -824,7 +825,7 @@ async function prepareRun(text, { fresh, mentions, room }) {
     if (!active()) openTab(null);
     currentTask = { id: `t${Date.now()}`, title: text.replace(/\s+/g, ' ').slice(0, 80), status: 'working',
                     started: Date.now(), ended: null, steps: [], summary: '', thumb: '', tabId: activeId,
-                    ...(inChannel ? { room: { cid: room.cid, name: room.name.slice(0, 80) } } : {}) };
+                    ...(inChannel ? { room: { cid: room.cid, name: room.name.slice(0, 80) } } : {}), ...(background ? { background: true } : {}) };
     store.tasks.unshift(currentTask);
   } else {
     currentTask.status = 'working';
@@ -894,7 +895,8 @@ function notify(title, body) {
 function agentTab() {
   let t = tabs.find((x) => x.id === currentTask?.tabId) || active();
   if (t?.internal) {                     // 업무 지도 같은 우리 화면 탭에서는 일하지 않는다 — 새 탭을 열어 그리로
-    const n = openTab(null);
+    // 메리가 맡긴 일(background)은 뒤쪽 탭에서 — 메리 화면을 가리지 않게
+    const n = openTab(null, { background: !!currentTask?.background });
     t = tabs.find((x) => x.id === n.id);
     if (currentTask) currentTask.tabId = t.id;
   }
@@ -922,12 +924,12 @@ function createWindow() {
   agent = new Agent({
     activeTab: agentTab,
     openTab: (u) => {
-      const t = openTab(u);
+      const t = openTab(u, { background: !!currentTask?.background });
       if (currentTask) currentTask.tabId = t.id;
       return t;
     },
     createPage: async (spec) => {
-      const t = openPageTab(spec);
+      const t = openPageTab(spec, { background: !!currentTask?.background });
       emitAgent({ type: 'page', spec, tabId: t.id });
       if (currentTask) currentTask.tabId = t.id;
       await new Promise((r) => { t.webContents.once('did-finish-load', r); setTimeout(r, 4000); });
