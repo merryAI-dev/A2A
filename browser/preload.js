@@ -5,8 +5,8 @@ const SEND = new Set(['agent:choose', 'ui:rects', 'ui:overlay', 'tab:new', 'tab:
   'nav:reload', 'nav:home', 'zoom', 'dl:action', 'history:remove', 'history:clear', 'find:go', 'find:stop', 'pw:resolve', 'pw:fill', 'pw:remove', 'sidebar:toggle', 'panel:set', 'bookmark:toggle', 'bookmark:remove', 'bookmark:open',
   'wallpaper:set', 'wallpaper:pick', 'task:open', 'page:open', 'web:open', 'notify',
   'prefs:set', 'ws:picker', 'ema:connect', 'ema:disconnect', 'map:open', 'agent:run', 'agent:stop', 'agent:reset', 'agent:answer']);
-const ON = new Set(['ws:changed', 'ai:quote', 'pw:offer', 'pw:fillable', 'pw:resolved', 'pw:filled', 'find:result', 'state', 'agent', 'cmd', 'wallpaper-image', 'chat:event', 'chat:status', 'onto:changed', 'invest:changed', 'invest:progress']);
-const INVOKE = new Set(['ws:profiles', 'ws:switch', 'bookmarks:import', 'history:query', 'history:suggest', 'chat:call', 'pw:list', 'pw:reveal', 'onto:call', 'invest:call']);
+const ON = new Set(['ws:changed', 'ai:quote', 'pw:offer', 'pw:fillable', 'pw:resolved', 'pw:filled', 'find:result', 'state', 'agent', 'cmd', 'wallpaper-image', 'chat:event', 'chat:status', 'onto:changed', 'invest:changed', 'invest:progress', 'learn:changed', 'learn:progress']);
+const INVOKE = new Set(['ws:profiles', 'ws:switch', 'bookmarks:import', 'history:query', 'history:suggest', 'chat:call', 'pw:list', 'pw:reveal', 'onto:call', 'invest:call', 'learn:call']);
 
 contextBridge.exposeInMainWorld('a2a', {
   send: (ch, ...args) => { if (SEND.has(ch)) ipcRenderer.send(ch, ...args); },

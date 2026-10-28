@@ -25,7 +25,8 @@ const { createHarness } = require('./harness');
 const { createRecall } = require('./recall');
 const { createWorkTypes } = require('./worktypes');
 const { createInvest } = require('./invest');
-const { createSsotRegistry } = require('./ssot');                      // SSoT 임시 발행(정책 확정 전) — docs/SSOW.md                          // 메리 딜룸(투자 건·논의·결정·보고서) — docs/INVEST.md
+const { createSsotRegistry } = require('./ssot');
+const { createLearn } = require('./learn');                            // 학습 모드 — 링크 하나로 학습 틀(docs/LEARN.md)                      // SSoT 임시 발행(정책 확정 전) — docs/SSOW.md                          // 메리 딜룸(투자 건·논의·결정·보고서) — docs/INVEST.md
 const { createSync, MODES: SYNC_MODES } = require('./sync');           // 업무 기록 올리기(L1, 기본 꺼짐)        // 하네스 개선(신호 → 제안 → 재실행 비교 → 교훈 → 채택) — docs/HARNESS.md
 const { collect } = require('./events');   // 업무 이벤트 수집(docs/EVENTS.md) — 실패해도 앱은 그대로 돈다
 const { createRouter } = require('./collect-router');
@@ -65,6 +66,7 @@ const WALL_FILE = () => path.join(app.getPath('userData'), 'wallpaper');
 const store = {
   bookmarks: [
     { url: 'a2a://메리', title: '메리' },
+    { url: 'a2a://학습', title: '학습' },
     { url: 'https://www.google.com/', title: 'Google' },
     { url: 'https://www.naver.com/', title: '네이버' },
     { url: 'https://www.linkedin.com/', title: 'LinkedIn' },
@@ -89,6 +91,10 @@ function loadStore() {
   store.prefs = { notify: true, askProfile: true, ...(store.prefs || {}) };
   delete store.prefs.avatarHue;
   // 이미 쓰던 사람에게도 즐겨찾기 "메리"를 한 번만 넣는다(지우면 다시 넣지 않는다)
+  if (!store.prefs.learnBookmark) {
+    store.prefs.learnBookmark = true;
+    if (!store.bookmarks.some((b) => b.url === 'a2a://학습')) store.bookmarks.splice(1, 0, { url: 'a2a://학습', title: '학습' });
+  }
   if (!store.prefs.merryBookmark) {
     store.prefs.merryBookmark = true;
     if (!store.bookmarks.some((b) => b.url === 'a2a://메리')) store.bookmarks.unshift({ url: 'a2a://메리', title: '메리' });
@@ -541,7 +547,7 @@ const chatApi = {
 };
 
 // ── 우리 화면 탭 ── 웹뷰 없이 셸이 카드 자리에 그린다(업무 지도). 탭이 이미 있으면 그리로
-const INTERNAL = { map: { title: '업무 지도', url: 'a2a://업무지도' }, merry: { title: '메리', url: 'a2a://메리' } };
+const INTERNAL = { map: { title: '업무 지도', url: 'a2a://업무지도' }, merry: { title: '메리', url: 'a2a://메리' }, learn: { title: '학습', url: 'a2a://학습' } };
 function openInternal(kind) {
   const t0 = tabs.find((t) => t.internal === kind);
   if (t0) { switchTab(t0.id); return t0.id; }
@@ -586,6 +592,8 @@ function makeKnowledge() {
   });
   recaller = createRecall({ onto, signals: () => harness.signals(), sameType: (id) => worktypes.tasksOf(id) });
   ssotReg = createSsotRegistry({ dir: path.join(app.getPath('userData'), 'ssot'), onto, worktypes: () => worktypes });
+  learn = createLearn({ userData: app.getPath('userData'), projectRoot: path.join(__dirname, '..'), apiKey, collect, user: () => profile.user,
+    send: (ch, ...a) => shell?.webContents.send(ch, ...a) });
   invest = createInvest({
     userData: app.getPath('userData'), collect, user: () => profile.user, apiKey, worktypes: () => worktypes, ema: () => ema,
     // 메리 ↔ 브라우저: 팀 채널 게시(승인은 메리 대화창에서), 홈 에이전트에게 맡기기, 맡긴 작업이 읽은 웹 페이지
@@ -629,6 +637,7 @@ function makeKnowledge() {
 }
 let invest = null;
 let ssotReg = null;
+let learn = null;
 
 // 새 작업이면 업무 지도에서 비슷한 지난 기록을 꺼내 붙인다(최대 3개·1,200자, 데이터 경계 안). 끄려면 prefs.recall = false
 function recallContext(text, typeId = null) {
@@ -1232,6 +1241,12 @@ const ontoCall = {
 ipcMain.handle('onto:call', async (e, name, ...args) => {
   if (e.sender !== shell?.webContents || !Object.hasOwn(ontoCall, name) || !onto) throw new Error('blocked');
   return ontoCall[name](...args);
+});
+// 학습 모드 — 화면에서 오는 호출만, 아는 이름만
+const LEARN_CALLS = new Set(['state', 'start', 'prepare', 'code', 'answer', 'due', 'setStatus', 'setNotes', 'tutor', 'chat', 'remove']);
+ipcMain.handle('learn:call', async (e, name, ...args) => {
+  if (e.sender !== shell?.webContents || !LEARN_CALLS.has(name) || !learn) throw new Error('blocked');
+  return learn[name](...args);
 });
 ipcMain.handle('invest:call', async (e, name, ...args) => {
   if (e.sender !== shell?.webContents || typeof name !== 'string' || !invest) throw new Error('blocked');

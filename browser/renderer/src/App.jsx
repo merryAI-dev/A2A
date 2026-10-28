@@ -9,6 +9,7 @@ import TopBar from './TopBar.jsx';
 import NewTab from './NewTab.jsx';
 import WorkMap from './WorkMap.jsx';
 import Merry from './Merry.jsx';
+import Learn from './Learn.jsx';
 import RoomPanel from './Room.jsx';
 import Resizer from './Resizer.jsx';
 import { a2a, useStore, get, openRoom, openTeam } from './store.js';
@@ -92,6 +93,7 @@ export default function App() {
             {cur?.newtab && <NewTab />}
             {cur?.internal === 'map' && <WorkMap />}
             {cur?.internal === 'merry' && <Merry />}
+            {cur?.internal === 'learn' && <Learn />}
           </div>
         </main>
         {S.panelOpen ? <RoomPanel /> : <div />}
