@@ -108,7 +108,13 @@ export async function swEval(cdp, expr) {
   const sw = targetInfos.find((t) => t.type === 'service_worker' && t.url.startsWith(EXT));
   if (!sw) throw new Error('확장 서비스 워커가 없습니다');
   const { sessionId } = await cdp.send('Target.attachToTarget', { targetId: sw.targetId, flatten: true });
-  const r = await cdp.send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true }, sessionId);
+  // 막 깨어난 서비스 워커는 잠깐 chrome.*가 없는 문맥으로 붙는다 — 그때만 몇 번 다시 묻는다
+  let r;
+  for (let i = 0; i < 20; i++) {
+    r = await cdp.send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true }, sessionId);
+    if (!/chrome is not defined/.test(r.exceptionDetails?.exception?.description || '')) break;
+    await sleep(250);
+  }
   await cdp.send('Target.detachFromTarget', { sessionId }).catch(() => {});
   if (r.exceptionDetails) throw new Error(r.exceptionDetails.exception?.description || r.exceptionDetails.text);
   return r.result.value;
@@ -121,8 +127,9 @@ async function launch() {
   const proc = spawn(CHROMIUM, [
     // 포트 0: 비어 있는 포트를 OS가 고른다 — 다른 프로그램이 띄운 크롬(같은 포트)에 잘못 붙지 않게
     `--user-data-dir=${profile}`, '--remote-debugging-port=0',
-    `--load-extension=${DIST}`, `--disable-extensions-except=${DIST}`,
-    '--disable-features=DisableLoadExtensionCommandLineSwitch',
+    // A2A_BUILTIN=1: 우리 Chromium 빌드에 내장된 확장(앱 번들 Resources/a2a)을 그대로 시험한다 — 바깥에서 싣지 않는다
+    ...(process.env.A2A_BUILTIN ? [] : [`--load-extension=${DIST}`, `--disable-extensions-except=${DIST}`,
+      '--disable-features=DisableLoadExtensionCommandLineSwitch']),
     '--no-first-run', '--no-default-browser-check', '--window-size=1400,900',
     // 시험 창은 화면에 띄우지 않는다(같이 보는 개발 창과 헷갈리지 않게) — 보고 싶으면 --show
     ...(args.includes('--show') ? [] : ['--headless=new']),

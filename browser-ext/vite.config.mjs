@@ -23,16 +23,31 @@ const manifest = () => ({
 
 export default defineConfig({
   root: 'src',
+  server: { fs: { allow: ['..', '../../browser'] } },
   base: './',
   plugins: [react(), tailwindcss(), manifest()],
-  resolve: { alias: { '@': r('./src/page') } },
+  // browser/(Electron 앱)의 업무 기록·온톨로지·하네스 모듈을 복사하지 않고 그대로 싣는다 — Node API만 shim으로 바꾼다
+  resolve: {
+    alias: [
+      { find: '@', replacement: r('./src/page') },
+      { find: /^(node:)?fs$/, replacement: r('./src/shim/fs.js') },
+      { find: /^(node:)?crypto$/, replacement: r('./src/shim/crypto.js') },
+      { find: /^(node:)?path$/, replacement: r('./node_modules/path-browserify/index.js') },
+      { find: /^@anthropic-ai\/sdk$/, replacement: r('./src/shim/anthropic.js') },
+      // browser/ 화면(업무 지도)이 쓰는 라이브러리는 이 폴더의 node_modules에서
+      { find: /^(react|react-dom|d3-force)(\/.*)?$/, replacement: r('./node_modules/$1$2') },
+    ],
+  },
+  define: { __dirname: JSON.stringify('/a2a/browser'), 'process.env': '{}', 'process.pid': '1' },
   build: {
     outDir: '../dist', emptyOutDir: true, target: 'chrome140', modulePreload: false,
+    commonjsOptions: { include: [/browser\/[^/]+\.js$/, /browser\/invest\//, /node_modules/], requireReturnsDefault: 'preferred', transformMixedEsModules: true },
     rollupOptions: {
       input: {
         sidepanel: r('./src/sidepanel.html'),
         newtab: r('./src/newtab.html'),
         page: r('./src/page.html'),
+        map: r('./src/map.html'),
         sw: r('./src/sw/index.js'),
       },
       output: { entryFileNames: (c) => (c.name === 'sw' ? 'sw.js' : 'assets/[name]-[hash].js') },

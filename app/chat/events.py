@@ -265,8 +265,16 @@ class Hub:
         self.task = asyncio.create_task(self._pump())
 
     async def _pump(self):
-        async for msg in self.pubsub.listen():
-            if msg.get("type") != "message":
+        # listen()은 구독이 잠깐이라도 비면(마지막 SSE가 떠난 순간) 끝나 버린다 — 그 뒤 새 구독이 와도
+        # 아무도 읽지 않아 실시간이 조용히 멈췄다. get_message로 계속 돈다.
+        while True:
+            try:
+                msg = await self.pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+            except Exception as e:  # noqa: BLE001 — 끊김은 다음 주기에 다시
+                log.warning("pubsub read failed: %s", e)
+                await asyncio.sleep(0.5)
+                continue
+            if not msg or msg.get("type") != "message":
                 continue
             tp = msg["channel"].decode()
             data = json.loads(msg["data"])

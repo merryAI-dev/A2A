@@ -1,4 +1,5 @@
 // A2A 서비스 워커 — 상태·탭·작업·에이전트·팀 채팅 다리(Electron main.js의 확장판).
+import '../shim/globals.js';
 import { on, handle, broadcast } from './hub.js';
 import { store, runtime, loadStore, saveStore, pushState, profile } from './state.js';
 import { CFG } from './config.js';

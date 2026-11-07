@@ -142,10 +142,10 @@ test('m3-live-from-teammate', async ({ cdp, EXT, Page, sleep }) => {
   await openChannel(p, '영업');
   await p.waitFor("document.body.innerText.length > 0");
   await sleep(1500);                                              // 스트림이 붙을 시간
-  const { channels } = await api('alice', 'rename', '/channels');
+  const { channels } = await api('alice', 'test', '/channels');
   const ch = channels.find((c) => c.name === '영업');
   const text = `[확장 시험·실시간] alice가 보낸 글 ${Date.now() % 100000}`;
-  await api('alice', 'rename', `/channels/${ch.id}/messages`, { method: 'POST', body: JSON.stringify({ body: text, kind: 'text', client_msg_id: `ext-${Date.now()}` }) });
+  await api('alice', 'test', `/channels/${ch.id}/messages`, { method: 'POST', body: JSON.stringify({ body: text, kind: 'text', client_msg_id: `ext-${Date.now()}` }) });
   // 새로고침 없이(30초 안전망보다 빨리) 나타나야 실시간
   const t0 = Date.now();
   const ok = await p.waitFor(`document.body.innerText.includes(${JSON.stringify(text)})`, 8000);
@@ -165,18 +165,20 @@ test('m3-workspace-switch', async ({ cdp, EXT, Page, sleep }) => {
   await p.eval("document.getElementById('ws-button').click()");
   await p.waitFor("!!document.querySelector('[data-ws]')");
   await p.shot('m3-workspace-menu.png', { width: 420, height: 820 });
-  const back = await sw('boram', 'rename');
+  const back = await sw('boram', 'test');
   await p.close();
   return { ok: denied?.ok === false && r?.ok && tenant === 'acme' && back?.ok, denied, tenant, me };
 });
 test('m3-unread-badge', async ({ cdp, swEval, sleep }) => {
-  const { channels } = await api('alice', 'rename', '/channels');
+  const { channels } = await api('alice', 'test', '/channels');
   const ch = channels.find((c) => c.name === '영업');
-  await api('alice', 'rename', `/channels/${ch.id}/messages`, { method: 'POST', body: JSON.stringify({ body: '@boram [확장 시험] 배지 확인', kind: 'text', client_msg_id: `ext-b-${Date.now()}` }) });
+  await api('alice', 'test', `/channels/${ch.id}/messages`, { method: 'POST', body: JSON.stringify({ body: '@boram [확장 시험] 배지 확인', kind: 'text', client_msg_id: `ext-b-${Date.now()}` }) });
   const text = await swEval(cdp, 'a2a.badge().then(() => chrome.action.getBadgeText({}))');
-  // 뒷정리 — 시험 글까지 읽음으로
-  const { messages } = await api('boram', 'rename', `/channels/${ch.id}/messages?limit=1`);
-  await api('boram', 'rename', `/channels/${ch.id}/read`, { method: 'POST', body: JSON.stringify({ seq: messages.at(-1).seq }) });
+  // 뒷정리 — 시험 글까지 읽음으로(시드·지난 시험이 남긴 다른 채널의 @멘션도)
+  for (const c of (await api('boram', 'test', '/channels')).channels) {
+    const { messages } = await api('boram', 'test', `/channels/${c.id}/messages?limit=1`);
+    if (messages?.length) await api('boram', 'test', `/channels/${c.id}/read`, { method: 'POST', body: JSON.stringify({ seq: messages.at(-1).seq }) });
+  }
   const after = await swEval(cdp, 'a2a.badge().then(() => chrome.action.getBadgeText({}))');
   return { ok: /^@\d+/.test(text) && !after.startsWith('@'), text, after };
 });
@@ -470,9 +472,9 @@ test('m6-rule-ai-room-person', async ({ cdp, EXT, Page, swEval, sleep }) => {
   const after = await swEval(cdp, 'a2a.tasks().length');
   const busy = await swEval(cdp, 'a2a.current()?.status === "working"');
   await panel.shot('m6-ai-room-person.png', { width: 420, height: 820 });
-  const { channels } = await api('boram', 'rename', '/channels');
+  const { channels } = await api('boram', 'test', '/channels');
   const ch = channels.find((c) => c.name === '영업');
-  const { messages } = await api('boram', 'rename', `/channels/${ch.id}/messages?limit=1`);
+  const { messages } = await api('boram', 'test', `/channels/${ch.id}/messages?limit=1`);
   await panel.close();
   return { ok: !!shown && after === before && !busy && messages.at(-1).body.includes(stamp) && /@alice/.test(messages.at(-1).body), last: messages.at(-1).body.slice(0, 100) };
 });
@@ -491,5 +493,44 @@ test('m6-context-menu-quote', async ({ cdp, EXT, Page, swEval, sleep }) => {
   await panel.shot('m6-quote.png', { width: 420, height: 820 });
   await panel.close(); await hotel.close();
   return { ok: !!ok && chip && menus, chip, menus };
+});
+
+// K — 업무 기록·업무 지도·하네스(browser/의 모듈을 그대로 실음) — Chromium 안에서 기록이 쌓이고 지도로 보인다
+const KN = "(async () => { for (let i = 0; i < 50 && !globalThis.a2a?.knowledge?.().harness; i++) await new Promise((r) => setTimeout(r, 100)); return globalThis.a2a.knowledge(); })()";
+test('k1-web-visit-recorded', async ({ cdp, Page, swEval, sleep }) => {
+  const url = `${await site()}/?k1=${Date.now()}`;
+  const t = await Page.open(cdp, url);
+  await t.waitFor("document.readyState === 'complete'");
+  await sleep(2500);                                   // settle_ms(1.5초) 뒤에 본문을 남긴다
+  const r = await swEval(cdp, `${KN}.then((k) => { const sites = k.onto.list('site'); const src = k.onto.list('source'); return { sites: sites.map((x) => x.label), sources: src.length, root: globalThis.a2a.collect().root }; })`);
+  await t.close();
+  return { ok: r.sites.includes(new URL(url).host) && r.sources > 0, ...r };
+});
+test('k2-chat-into-ontology', async ({ cdp, EXT, Page, swEval }) => {
+  const p = await Page.open(cdp, `${EXT}/sidepanel.html`);
+  await p.waitFor('!!window.a2a');
+  const body = `업무 지도 시험 ${Date.now()}`;
+  const posted = await p.eval(`(async () => { const chs = await window.a2a.invoke('chat:call', 'channels'); const c = chs.find((x) => x.name === '영업'); const m = await window.a2a.invoke('chat:call', 'post', c.id, ${JSON.stringify(body)}); return { cid: c.id, name: c.name, seq: m.seq }; })()`);
+  await p.close();
+  const r = await swEval(cdp, `${KN}.then((k) => ({ channels: k.onto.list('channel').map((x) => x.label), messages: k.onto.list('message', ${JSON.stringify(body.slice(-13))}).length }))`);
+  return { ok: r.messages > 0 && r.channels.some((x) => x.includes(posted.name)), posted, ...r };
+});
+test('k3-map-page', async ({ cdp, EXT, Page }) => {
+  const p = await Page.open(cdp, `${EXT}/map.html`);
+  const ok = await p.waitFor("/노트 [1-9]\\d* · 관계 [1-9]/.test(document.body.innerText) && !!document.querySelector('canvas, svg')", 12000);
+  await p.shot('k3-map.png', { width: 1400, height: 900 });
+  const text = await p.eval('document.body.innerText.slice(0, 400)');
+  await p.close();
+  return { ok: !!ok, text };
+});
+test('k4-harness-safety-last', async ({ cdp, swEval }) => {
+  const r = await swEval(cdp, `${KN}.then((k) => { const a = globalThis.a2a.makeAgent(); a.host.harness = { prompt: () => '채택한 교훈: 시험', toolGuide: () => '', version: () => 'v-test' }; const sp = a.systemPrompt(); return { state: Object.keys(k.harness.state()), lesson: sp.indexOf('채택한 교훈: 시험'), safety: sp.indexOf('안전 규칙 (반드시)'), version: a.harnessVersion() }; })`);
+  return { ok: r.lesson > 0 && r.safety > r.lesson && r.version.edit === 'v-test' && r.state.length > 0, ...r };
+});
+test('k5-stored-in-profile', async ({ cdp, swEval }) => {
+  await swEval(cdp, "new Promise((r) => setTimeout(r, 500))");
+  const r = await swEval(cdp, 'globalThis.a2a.fsUsage()');
+  const db = await swEval(cdp, "new Promise((res) => { const q = indexedDB.open('a2a-fs'); q.onsuccess = () => { const c = q.result.transaction('files').objectStore('files').count(); c.onsuccess = () => res(c.result); }; })");
+  return { ok: r.files > 0 && db > 0, ...r, stored: db };
 });
 }

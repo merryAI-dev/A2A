@@ -5,6 +5,7 @@
 // 화면이 25초마다 핑을 보내 워커를 깨워 둔다. 화면이 다 닫히면 1분마다 안 읽음만 확인해 툴바 배지에 띄운다.
 import { on, handle, broadcast, sendTo, onPorts, uiCount } from './hub.js';
 import { CFG } from './config.js';
+import { collect } from '../../../browser/events.js';
 import { store, runtime, loadStore, saveStore, pushState, profile } from './state.js';
 
 function createChat({ engine, tenant, user, onEvent, onStatus }) {
@@ -166,15 +167,16 @@ const chatCall = {
     return Object.keys(out).length > 0 && a.updateMe(out);
   },
   members: (a) => a.members(),
-  channels: (a) => a.channels(),
+  channels: (a) => a.channels().then(collect.chatChannels),
   messages: (a, c, o = {}) => cid(c) && a.messages(c, {
     after: Number.isInteger(o.after) ? o.after : undefined,
     before: Number.isInteger(o.before) ? o.before : undefined,
     thread: Number.isInteger(o.thread) ? o.thread : undefined,
     limit: Number.isInteger(o.limit) ? o.limit : 60,
-  }),
+  }).then((r) => collect.chatMessages(c, r)),
   post: (a, c, body, o = {}) => cid(c) && typeof body === 'string' && body.trim() && body.length <= 8000 &&
-    a.post(c, body, { parentSeq: Number.isInteger(o.parentSeq) ? o.parentSeq : undefined }),
+    a.post(c, body, { parentSeq: Number.isInteger(o.parentSeq) ? o.parentSeq : undefined })
+      .then((m) => { collect.chatMessage(c, { ...m, body: m?.body ?? body }, { direction: 'sent' }); return m; }),
   react: (a, c, seq, emoji, onOff) => cid(c) && Number.isInteger(seq) && typeof emoji === 'string' && emoji.length <= 32 &&
     a.react(c, seq, emoji, !!onOff),
   read: (a, c, seq) => cid(c) && Number.isInteger(seq) && a.read(c, seq).then((r) => { badge(); return r; }),
@@ -189,8 +191,12 @@ handle('chat:call', async (name, ...args) => {
 
 // 에이전트가 채널에 쓸 때(M4) — 에이전트 글은 🤖로 시작해 사람 글과 구분한다(서버엔 봇 계정이 없다)
 export const agentChat = {
-  channels: async () => (await chatApi()).channels(),
-  post: async (c, text, opts) => (await chatApi()).post(c, `🤖 ${text}`, opts),
+  channels: async () => (await chatApi()).channels().then(collect.chatChannels),
+  post: async (c, text, opts) => {
+    const m = await (await chatApi()).post(c, `🤖 ${text}`, opts);
+    collect.chatMessage(c, { ...m, body: m?.body ?? `🤖 ${text}` }, { direction: 'sent', byAgent: true, taskId: opts?.taskId });
+    return m;
+  },
   messages: async (c, o) => (await chatApi()).messages(c, o),
 };
 

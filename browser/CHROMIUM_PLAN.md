@@ -21,6 +21,18 @@ Electron은 "앱 속 브라우저"라서 구글이 OAuth 로그인을 정책적�
 5. **배포** — 코드 서명·공증, 자동 업데이트(Sparkle 등), 애플에 브라우저용 패스키 권한 신청(아이클라우드 키체인).
 6. **유지** — Chromium은 4주마다 새 버전(보안 수정 포함). 우리 패치는 작게 유지하고 리베이스를 정기 작업으로 둔다.
 
+## 지금 상태 (2026-11-07)
+- 1단계 원본 빌드: 됨 — `~/dev/chromium/src/out/A2A/Chromium.app` (Chromium 159). Xcode 26은 Metal 툴체인을 따로 받아야 한다:
+  `sudo xcodebuild -runFirstLaunch && xcodebuild -downloadComponent MetalToolchain`.
+- 3단계 내장 확장: 됨 — `chromium/patches/0001-a2a-builtin-extension.patch`가 `browser-ext`를 앱 번들 `Resources/a2a`에
+  싣고 `ComponentLoader`가 시작할 때 내장 확장으로 올린다(확장 목록에 안 보이고, 권한 창 없음, `--load-extension` 필요 없음).
+  빌드: `./chromium/build.sh` (패치 확인 → 확장 빌드·복사 → autoninja).
+- 업무 기록·업무 지도(온톨로지)·하네스 개선·업무 유형·SSoT·팀 채팅 기록도 들어갔다. `browser/`의 모듈(events.js·ontology.js·
+  harness.js·worktypes.js·recall.js·ssot.js)을 **복사하지 않고 그대로** 번들한다 — Node API만 `browser-ext/src/shim/`
+  (fs → IndexedDB, crypto → sha256)로 바꾼다. 규칙은 browser/ 한 곳에만 있다.
+- 아직: 업무 유형이 애매할 때 묻는 객관식 창, 업무 기록 올리기(sync.js), 바깥 어댑터 입구(collect-router.js — MV3는 HTTP를 못 연다),
+  메리 딜룸·학습 모드, 4단계(C++ 브라우저 UI).
+
 ## 개발용 빌드 설정(`out/A2A/args.gn`, 처음)
 ```
 is_debug = false

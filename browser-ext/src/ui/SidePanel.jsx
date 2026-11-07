@@ -7,7 +7,7 @@ import RoomPanel from './Room.jsx';
 import ProfilePicker from './ProfilePicker.jsx';
 import { Avatar } from './Mentions.jsx';
 import {
-  useStore, openRoom, openTask, newAiChat, listProfiles, switchProfile, showPicker,
+  a2a, useStore, openRoom, openTask, newAiChat, listProfiles, switchProfile, showPicker,
 } from './store.js';
 import { STATUS_DOT, statusText } from './format.js';
 
@@ -58,6 +58,7 @@ function RoomSwitcher({ onClose, docked = false }) {
         );
       })}
       <div className="my-2 h-px bg-card-line" />
+      <Row onClick={() => a2a.send('map:open')}><Icon name="graph" className="size-4 text-card-sub" />업무 지도</Row>
       <Row on={room.kind === 'history'} onClick={() => go(() => openRoom({ kind: 'history' }))}><Icon name="clock" className="size-4 text-card-sub" />방문 기록</Row>
       <Row on={room.kind === 'downloads'} onClick={() => go(() => openRoom({ kind: 'downloads' }))}><Icon name="download" className="size-4 text-card-sub" />다운로드</Row>
       <Row on={room.kind === 'me'} onClick={() => go(() => openRoom({ kind: 'me' }))}><Icon name="person" className="size-4 text-card-sub" />마이페이지</Row>
