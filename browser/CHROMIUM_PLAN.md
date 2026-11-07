@@ -30,8 +30,16 @@ Electron은 "앱 속 브라우저"라서 구글이 OAuth 로그인을 정책적�
 - 업무 기록·업무 지도(온톨로지)·하네스 개선·업무 유형·SSoT·팀 채팅 기록도 들어갔다. `browser/`의 모듈(events.js·ontology.js·
   harness.js·worktypes.js·recall.js·ssot.js)을 **복사하지 않고 그대로** 번들한다 — Node API만 `browser-ext/src/shim/`
   (fs → IndexedDB, crypto → sha256)로 바꾼다. 규칙은 browser/ 한 곳에만 있다.
+- 4단계 C++ 브라우저 UI: 시작 — `chromium/patches/0002-a2a-browser-ui.patch`
+  - 세로 탭이 기본(`tab_strip_prefs.cc`의 `kVerticalTabsEnabled` 기본값 true). 사용자가 끄면 그 선택을 따른다.
+  - A2A 버튼은 툴바에 늘 고정(`toolbar_actions_model.cc` — 정책 강제 고정과 같은 자리). 퍼즐 메뉴에서 꺼낼 필요 없음.
+  - 카드 레이아웃: 탭이 하나여도 웹 페이지가 브라우저 배경 위에 8px 띄운 둥근 카드(분할 보기와 같은 6px 모서리).
+    기능 `kA2ACardContents`(`ui_features`, 기본 켜짐) — `--disable-features=A2ACardContents`로 끈다.
+  - 확인(2026-11-07, 새 프로필): UI DevTools(`--enable-ui-devtools`)로 본 뷰 트리에서
+    `VerticalTabStripRegionView` 240px·가로 탭 줄 0×0, `ContentsContainerView` insets 8·`ContentsWebView` 모서리 6,
+    확장에서 `chrome.action.getUserSettings()` → `isOnToolbar: true`. 시험 31/31(내장 모드, `A2A_BUILTIN=1`).
 - 아직: 업무 유형이 애매할 때 묻는 객관식 창, 업무 기록 올리기(sync.js), 바깥 어댑터 입구(collect-router.js — MV3는 HTTP를 못 연다),
-  메리 딜룸·학습 모드, 4단계(C++ 브라우저 UI).
+  메리 딜룸·학습 모드, 4단계의 나머지(배경화면·새 탭 카드 화면 등 확장으로 안 되는 화면).
 
 ## 개발용 빌드 설정(`out/A2A/args.gn`, 처음)
 ```
