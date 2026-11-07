@@ -22,7 +22,8 @@ USERS = "owner1,mate1,solo,outsider,boss2"
 @pytest.fixture(scope="module")
 def env(tmp_path_factory):
     from tests.test_chat_platform import _reset
-    from app.chat import db, provision, service as svc
+    from app.chat import db, provision
+    from tests import chat_http as svc
     _reset(PG_A, ["w_control", "w_cell_a"])
     _reset(PG_B, ["w_cell_b"])
     mp = pytest.MonkeyPatch()

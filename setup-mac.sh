@@ -35,7 +35,7 @@ ok "Xcode 도구 · git · Homebrew"
 
 # ── 1. 패키지 ──
 say "패키지 (Homebrew)"
-for f in postgresql@17 redis node@22 uv; do
+for f in postgresql@17 redis node@22 uv rust; do
   if brew list --versions "$f" >/dev/null 2>&1; then ok "$f"; else run brew install "$f" </dev/null; fi
 done
 PG_BIN="$(brew --prefix postgresql@17)/bin"
@@ -101,6 +101,11 @@ say "팀 채팅 시드 (워크스페이스 TEST, 관리자 $ME)"
 if (( CHECK )); then plan ".venv/bin/python scripts/chat_dev_seed.py --admin $ME"; else
   ( set -a; . "$ENV"; set +a; .venv/bin/python scripts/chat_dev_seed.py --admin "$ME" ) && ok "시드"
 fi
+say "채팅 엔진 (rust/chat-engine — /chat/v1 데이터 플레인)"
+if (( CHECK )); then plan "cargo build --release"; else
+  run cargo build --release --manifest-path rust/chat-engine/Cargo.toml
+fi
+
 say "브라우저 (browser/)"
 run bash -c "cd browser && npm ci --no-audit --no-fund && npx vite build"
 ok "npm 설치·빌드"

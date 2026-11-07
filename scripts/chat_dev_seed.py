@@ -12,7 +12,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.chat import platform, provision, service as svc  # noqa: E402
+from app.chat import platform, provision  # noqa: E402
+from app.chat.db import tenant_admin_tx  # noqa: E402
 from app.chat.db import registry  # noqa: E402
 from app.errors import EngineError  # noqa: E402
 
@@ -31,19 +32,39 @@ def ensure_tenant(slug, name, owner, members, guests=()):
         t = registry().tenant(slug)
         print(f"tenant {slug} exists (cell {t.cell_id})")
     for uid, role in members:
-        svc.add_member(t, owner, uid, mail(uid), role=role)
+        provision._add_member_admin(t, uid, mail(uid), role, {})
     for uid in guests:
-        svc.add_member(t, owner, uid, mail(uid), role="guest")
+        provision._add_member_admin(t, uid, mail(uid), "guest", {})
     return t
 
 
-def ensure_channel(t, uid, name, **kw):
-    try:
-        return svc.create_channel(t, uid, name, **kw)
-    except EngineError as e:
-        if e.code != "conflict":
-            raise
-        return next(c for c in svc.list_channels(t, uid) if c["name"] == name)
+def channels(t):
+    with tenant_admin_tx(t) as conn:
+        return conn.execute("select id, name, last_seq from channels").fetchall()
+
+
+def ensure_channel(t, uid, name, *, visibility="public", topic=""):
+    with tenant_admin_tx(t) as conn:
+        ch = conn.execute(
+            """insert into channels (name, topic, visibility, created_by) values (%s, %s, %s, %s)
+               on conflict (name) do update set topic = excluded.topic
+               returning id, name, last_seq""", (name, topic, visibility, uid)).fetchone()
+        conn.execute("""insert into channel_members (channel_id, user_id, role)
+                        values (%s, %s, 'channel_admin') on conflict do nothing""", (ch["id"], uid))
+    return ch
+
+
+def post(t, uid, cid, body, parent_seq=None):
+    with tenant_admin_tx(t) as conn:
+        conn.execute("select set_config('chat.uid', %s, true)", (uid,))
+        return conn.execute("select * from post_message(%s, %s, %s, 'text', %s, null, %s)",
+                            (cid, uid, body, parent_seq, [])).fetchone()
+
+
+def react(t, uid, cid, seq, emoji):
+    with tenant_admin_tx(t) as conn:
+        conn.execute("select set_config('chat.uid', %s, true)", (uid,))
+        conn.execute("select react(%s, %s, %s, %s, true)", (cid, seq, uid, emoji))
 
 
 def main():
@@ -63,21 +84,25 @@ def main():
                       guests=["vendor"])
     ensure_tenant("acme", "Acme Corp", "acme_ceo", [("alice", "member")])
 
-    gen = next(c for c in svc.list_channels(t, a.admin) if c["name"] == "general")
+    gen = next(c for c in channels(t) if c["name"] == "general")
     if gen["last_seq"] == 0:
-        svc.post_message(t, "alice", gen["id"], "안녕하세요! 이번 주 베트남 리드 같이 봐요 @boram")
-        root = svc.post_message(t, a.admin, gen["id"], "좋아요. A 호텔부터 볼게요 @alice")
-        svc.post_message(t, "bob", gen["id"], "PMS 교체 시점 확인해 볼게요", parent_seq=root["seq"])
-        svc.react(t, "alice", gen["id"], root["seq"], "👍", True)
+        post(t, "alice", gen["id"], "안녕하세요! 이번 주 베트남 리드 같이 봐요 @boram")
+        root = post(t, a.admin, gen["id"], "좋아요. A 호텔부터 볼게요 @alice")
+        post(t, "bob", gen["id"], "PMS 교체 시점 확인해 볼게요", parent_seq=root["seq"])
+        react(t, "alice", gen["id"], root["seq"], "👍")
     sales = ensure_channel(t, a.admin, "영업", topic="해외 영업 파이프라인")
     if sales["last_seq"] == 0:
-        svc.post_message(t, a.admin, sales["id"], "이번 분기 목표: 동남아 호텔 체인 20곳 접촉")
+        post(t, a.admin, sales["id"], "이번 분기 목표: 동남아 호텔 체인 20곳 접촉")
     deal = ensure_channel(t, a.admin, "투자-비공개", visibility="private", topic="투자 논의")
-    svc.set_channel_member(t, a.admin, deal["id"], "alice", True)
+    with tenant_admin_tx(t) as conn:
+        conn.execute("""insert into channel_members (channel_id, user_id) values (%s, 'alice')
+                        on conflict do nothing""", (deal["id"],))
     if deal["last_seq"] == 0:
-        svc.post_message(t, a.admin, deal["id"], "시리즈 A 조건 검토 중 — 외부 공유 금지")
+        post(t, a.admin, deal["id"], "시리즈 A 조건 검토 중 — 외부 공유 금지")
     proj = ensure_channel(t, a.admin, "vendor-협업", topic="외부 협력사와 공유")
-    svc.set_channel_member(t, a.admin, proj["id"], "vendor", True)
+    with tenant_admin_tx(t) as conn:
+        conn.execute("""insert into channel_members (channel_id, user_id) values (%s, 'vendor')
+                        on conflict do nothing""", (proj["id"],))
     print("seeded — users: boram(owner, superadmin), alice(admin), bob, carol, vendor(guest)")
 
 

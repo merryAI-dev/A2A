@@ -32,7 +32,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from ..errors import EngineError
-from . import provision
+from . import internal_client, provision
 from .db import Tenant, registry
 
 # 의존 순서(복사 순서). 비우기는 역순.
@@ -133,7 +133,7 @@ def enqueue(slug: str, to_cell: str, actor: str) -> int:
     """이동을 대기열에 넣는다 — 실행은 작업자(배경 스레드 또는 크론 tick)가 한다.
     검증은 여기서 미리 한다: 대기열에 들어간 뒤 실패하면 사람이 늦게 안다."""
     reg = registry()
-    reg.forget(slug)
+    reg.forget(slug); internal_client.forget_route(slug)
     t = reg.tenant(slug)
     if t.cell_id == to_cell:
         raise EngineError(409, "invalid_state", "이미 그 셀에 있습니다")
@@ -222,7 +222,7 @@ def run_move(mid: int) -> dict:
     if m is None or m["state"] != "copying":
         raise EngineError(409, "invalid_state", "실행할 수 있는 이동이 아닙니다")
     slug, to_cell, actor = m["slug"], m["to_cell"], m["actor"]
-    reg.forget(slug)
+    reg.forget(slug); internal_client.forget_route(slug)
     t = reg.tenant(slug)
     src, dst = _conn(t.cell_id), _conn(to_cell)
     target = Tenant(t.id, t.slug, t.name, to_cell, t.schema, "provisioning", t.plan)
@@ -265,7 +265,7 @@ def run_move(mid: int) -> dict:
             c.execute("update tenants set status = 'migrating' where id = %s", (t.id,))
             c.execute("update tenant_moves set state = 'fencing', fenced_at = now(), "
                       "heartbeat_at = now(), phase = 'fence' where id = %s", (mid,))
-        reg.forget(slug)
+        reg.forget(slug); internal_client.forget_route(slug)
         with src.transaction():
             _schema(src, t)
             src.execute(sql.SQL("revoke usage on schema {} from {}").format(
@@ -329,7 +329,7 @@ def run_move(mid: int) -> dict:
                          values (%s, 'tenant.move', %s, %s, %s)""",
                       (actor, t.id, slug, Jsonb(report)))
         switched = True
-        reg.forget(slug)
+        reg.forget(slug); internal_client.forget_route(slug)
         return {"move_id": mid, **report}
     except _Cancelled:
         _rollback(t, target, src, fenced)
@@ -389,7 +389,7 @@ def recover_stale(stale_sec: "float | None" = None) -> list[dict]:
                            (r["id"],)).fetchone()
         if not ok:
             continue
-        registry().forget(r["slug"])
+        registry().forget(r["slug"]); internal_client.forget_route(r["slug"])
         t = registry().tenant(r["slug"])
         target = Tenant(t.id, t.slug, t.name, r["to_cell"], t.schema, "provisioning", t.plan)
         src = _conn(r["from_cell"])
@@ -416,7 +416,7 @@ def _rollback(t: Tenant, target: Tenant, src, fenced: bool) -> None:
         pass
     with registry().control_tx() as c:
         c.execute("update tenants set status = 'active' where id = %s", (t.id,))
-    registry().forget(t.slug)
+    registry().forget(t.slug); internal_client.forget_route(t.slug)
 
 
 def _finish(mid: int, state: str, error: "str | None" = None) -> None:

@@ -45,6 +45,7 @@ tests/test_compliance.py
 tests/test_tracker_dashboard.py
 tests/test_team_chat.py
 tests/test_chat_platform.py
+tests/test_rust_parity.py
 tests/test_claude_provider.py
 tests/test_workspace_unify.py
 tests/test_ingest_ssrf.py

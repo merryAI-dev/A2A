@@ -44,6 +44,8 @@ def _allowlist() -> "set[str]":
 
 def _authorize(uid: str, email: str) -> None:
     allowed = _allowlist()
+    if "__all__" in allowed:      # 시험 하네스 전용 와일드카드 — 명시적으로 설정해야만 열린다
+        return
     if not allowed:
         raise HTTPException(403, "접근이 닫혀 있습니다 — SAAS_ALLOWED_USERS가 "
                                  "비어 있어 아무도 들어올 수 없습니다.")

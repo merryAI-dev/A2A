@@ -9,9 +9,9 @@
 검증 전에 지우는 경로는 없다 — 3이 실패하면 파티션은 그대로 남고 다음 실행이
 같은 달을 처음부터 다시 한다(재실행 안전). 4와 5는 같은 트랜잭션이다.
 
-조회: 핫 데이터가 바닥나면 list_messages가 read_archived로 이어 읽는다(느린 경로,
-채널 seq 범위 색인으로 필요한 달만 연다). 아카이브 본문 검색은 지원하지 않는다
-(문서화된 한계 — 내보내기 후 오프라인 검색).
+조회(read_archived)·내보내기는 Rust 데이터 플레인(rust/chat-engine/src/archive.rs)이 맡는다 —
+여기는 쓰기(월 이동·검증·색인·영구 삭제)만 남는다. 객체(JSONL.gz)·색인(archive_index) 계약을
+바꾸면 양쪽을 함께 바꾼다. 아카이브 본문 검색은 지원하지 않는다(문서화된 한계).
 
 저장소(CHAT_ARCHIVE_STORE): local(디렉터리, 기본) | supabase(Storage REST, 미검증)
 """
@@ -196,74 +196,6 @@ def archive_all(today: "date | None" = None) -> list[dict]:
         except Exception as e:  # noqa: BLE001
             out.append({"tenant": t.slug, "error": f"{type(e).__name__}: {e}"})
     return out
-
-
-def read_archived(t: Tenant, channel_id: int, *, before: "int | None", limit: int,
-                  thread: "int | None" = None) -> list[dict]:
-    """핫 데이터보다 오래된 메시지 — 채널 seq 범위가 겹치는 달만 새 것부터 연다.
-    권한은 호출자(list_messages)가 이미 확인했다(채널 가시성·channel.read)."""
-    with tenant_admin_tx(t) as conn:
-        idx = conn.execute("select month, object_key, channels from archive_index "
-                           "order by month desc, id desc").fetchall()
-    st = store()
-    out: list[dict] = []
-    for row in idx:
-        rng = (row["channels"] or {}).get(str(channel_id))
-        if not rng or (before is not None and rng[0] >= before):
-            continue
-        msgs = []
-        for line in gzip.decompress(st.get(row["object_key"])).splitlines():
-            m = json.loads(line)
-            if m["channel_id"] != channel_id:
-                continue
-            if thread == -1:                     # 내보내기: 답글 전부
-                if m["parent_seq"] is None:
-                    continue
-            elif (thread is None) != (m["parent_seq"] is None) or \
-                    (thread is not None and m["parent_seq"] != thread):
-                continue
-            if before is not None and m["seq"] >= before:
-                continue
-            if m.get("deleted_at"):
-                m["body"] = ""
-            msgs.append({k: m[k] for k in ("channel_id", "seq", "parent_seq", "author", "body",
-                                           "kind", "created_at", "edited_at", "reply_count",
-                                           "last_reply_at")}
-                        | {"deleted": bool(m.get("deleted_at")), "archived": True,
-                           "reactions": []})
-        msgs.sort(key=lambda m: m["seq"], reverse=True)
-        out.extend(msgs[: limit - len(out)])
-        if len(out) >= limit:
-            break
-    out.sort(key=lambda m: m["seq"])
-    return out
-
-
-def export_channel(t: Tenant, uid: str, channel_id: int):
-    """채널 전체(아카이브 + 핫)를 NDJSON으로 흘려보낸다. export.run 권한 필요."""
-    from . import service as svc
-    from .db import tenant_tx
-    with tenant_tx(t, uid) as conn:
-        ch, my_role = svc._channel(conn, channel_id, uid)
-        svc._require(conn, uid, "export.run", svc._authz_channel(ch), my_role)
-    with tenant_admin_tx(t) as conn:
-        conn.execute("insert into audit_log (actor, action, target) values (%s, 'export.channel', %s)",
-                     (uid, str(channel_id)))
-
-    def gen():
-        for m in read_archived(t, channel_id, before=None, limit=10**9):
-            yield json.dumps(m, default=str, ensure_ascii=False) + "\n"
-        for m in read_archived(t, channel_id, before=None, limit=10**9, thread=-1):
-            yield json.dumps(m, default=str, ensure_ascii=False) + "\n"
-        # 핫 데이터는 서버 측 커서로 — 큰 채널도 메모리에 다 올리지 않는다
-        with tenant_admin_tx(t) as conn:
-            with conn.cursor(name="export_cur") as cur:
-                cur.itersize = 2000
-                cur.execute("select * from messages where channel_id = %s order by seq",
-                            (channel_id,))
-                for m in cur:
-                    yield json.dumps(m, default=str, ensure_ascii=False) + "\n"
-    return gen()
 
 
 def purge_expired(today: "date | None" = None) -> list[dict]:

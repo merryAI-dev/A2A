@@ -78,12 +78,11 @@ def lead_tenants(uid: str) -> list[dict]:
     테넌트 멤버십(컨트롤 DB)만 보면 게스트도 회사 리드 파이프라인을 보게 된다. 권한 판정은
     채팅과 같은 ABAC(역할·deny 정책·속성)로 한다 — 관리자가 deny 정책으로 특정 사람을 뺄 수 있다."""
     def load():
-        from ..chat import service as chat_svc
-        from ..chat.db import registry
+        from ..chat import internal_client
         out = []
         for t in tenants_of(uid):
             try:
-                if chat_svc.me(registry().tenant(t["slug"]), uid)["can"].get("lead.access"):
+                if internal_client.me(t["slug"], uid)["can"].get("lead.access"):
                     out.append(t)
             except EngineError as e:
                 # 셀 이동 펜스 중(503)이면 권한을 모른다 — 빼면 리드 데이터가 잠깐 예전 공간으로
@@ -133,7 +132,7 @@ def migrate(uid: str, email: str, tenant_slug: str) -> dict:
 
     권한: 예전 워크스페이스의 소유자이면서, 대상 테넌트에서 멤버 초대 권한(member.invite)이
     있어야 한다 — 예전 팀원을 테넌트 멤버로 들이는 일이 함께 일어나기 때문이다."""
-    from ..chat import service as chat_svc
+    from ..chat import internal_client
     from ..chat.db import registry
     from ..chat.provision import _add_member_admin
     from .store import get_saas_store
@@ -151,12 +150,12 @@ def migrate(uid: str, email: str, tenant_slug: str) -> dict:
     if root.get("migrated_to"):
         raise EngineError(409, "invalid_state", f"이미 옮겼습니다 ({root['migrated_to']})")
     t = registry().tenant(tenant_slug)
-    if not chat_svc.me(t, uid)["can"].get("member.invite"):
+    if not internal_client.me(t.slug, uid)["can"].get("member.invite"):
         raise EngineError(403, "forbidden", "대상 워크스페이스에서 멤버를 들일 권한이 필요합니다")
     target = f"t-{t.id}"
 
     # 1) 예전 팀원을 테넌트 멤버로 (이미 멤버면 역할은 그대로 둔다)
-    existing = {m["user_id"] for m in chat_svc.list_members(t, uid)}
+    existing = {m["user_id"] for m in internal_client.members(t.slug, uid)}
     added = []
     for m in st.list("member", legacy):
         mu = m.get("uid")
@@ -209,9 +208,8 @@ def status(uid: str, tenant_hint: str = "") -> dict:
         counts = {k: len(st.list(k, r.legacy_ws, limit=500)) for k in DATA_KINDS}
         # migrate()와 같은 조건 — 버튼을 보여 놓고 403을 주지 않게
         if r.legacy_ws == f"ws-{uid}" and r.tenant:
-            from ..chat import service as chat_svc
-            from ..chat.db import registry
-            can = bool(chat_svc.me(registry().tenant(r.tenant["slug"]), uid)["can"].get("member.invite"))
+            from ..chat import internal_client
+            can = bool(internal_client.me(r.tenant["slug"], uid)["can"].get("member.invite"))
     return {"workspace_id": r.workspace_id,
             "mode": "tenant" if r.workspace_id.startswith("t-") else "legacy",
             "tenant": r.tenant, "tenants": lead_tenants(uid),

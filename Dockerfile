@@ -3,6 +3,13 @@
 # 계약: 엔진은 무상태 계산기. 컨테이너 내 SQLite(A2A_DB_PATH)는 휘발 캐시이며
 # 보존 책임은 API 계층의 Firestore에 있다. MVP는 max-instances=1로 배포해
 # job 폴링 일관성을 확보한다 (스펙 Architecture 절).
+# 1단계: 채팅 엔진(Rust 데이터 플레인) — tx_fence.sql을 include_str로 읽으므로 app/chat/sql도 복사한다
+FROM rust:1-slim AS chat-engine
+WORKDIR /build
+COPY rust/chat-engine rust/chat-engine
+COPY app/chat/sql app/chat/sql
+RUN cargo build --release --manifest-path rust/chat-engine/Cargo.toml
+
 FROM python:3.12-slim
 
 WORKDIR /srv
@@ -23,5 +30,9 @@ COPY scripts/chat_dev_seed.py scripts/
 ENV A2A_DB_PATH=/tmp/a2a.db \
     UPLOAD_DIR=/tmp/uploads \
     LOG_FORMAT=json
+# /chat/v1는 Rust 앞문이 직접, 나머지는 안쪽 Python(8081)으로 중계한다
+COPY --from=chat-engine /build/rust/chat-engine/target/release/a2a-chat /usr/local/bin/a2a-chat
+ENV A2A_CHAT_BIND=0.0.0.0 \
+    A2A_UPSTREAM=http://127.0.0.1:8081
 EXPOSE 8080
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8080}"]
+CMD ["sh", "-c", "uvicorn app.main:app --host 127.0.0.1 --port 8081 & exec a2a-chat serve --port ${PORT:-8080}"]

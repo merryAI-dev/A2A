@@ -18,7 +18,7 @@ from datetime import datetime, timedelta, timezone
 from psycopg.types.json import Jsonb
 
 from ..errors import EngineError
-from . import events, metrics, provision
+from . import internal_client, metrics, provision
 from .db import Tenant, registry, tenant_admin_tx
 
 ROLES = {"superadmin": 3, "operator": 2, "viewer": 1}
@@ -117,6 +117,7 @@ def set_tenant(uid: str, slug: str, *, status: "str | None" = None,
                 "legal_hold": legal_hold, "archive_purge_months": archive_purge_months,
                 "clear_archive_purge": clear_archive_purge})
     registry().forget(slug)
+    internal_client.forget_route(slug)
 
 
 def list_cells(uid: str) -> list[dict]:
@@ -407,7 +408,7 @@ def deliver_announcement(aid: int) -> dict:
                 c.execute("""update announcement_delivery set delivered_at = now(), error = null
                               where announcement_id = %s and tenant_id = %s""", (aid, t.id))
             if seq is not None:
-                events.publish(t, ch["id"], {"type": "message", "seq": seq})
+                internal_client.publish(t.slug, ch["id"], {"type": "message", "seq": seq})
             ok += 1
         except Exception as e:  # noqa: BLE001 — 한 셀의 실패가 나머지 전달을 막지 않는다
             failed.append(r["slug"])
@@ -498,4 +499,4 @@ def overview(uid: str) -> dict:
                                 from tenants""").fetchone()
     m = tenant_metrics(uid, None, 15)
     return {"tenants": counts, "last_15m": m["summary"],
-            "fanout": dict(events.stats), "top": top_tenants(uid, 15, 5)}
+            "fanout": internal_client.stats().get("fanout", {}), "top": top_tenants(uid, 15, 5)}

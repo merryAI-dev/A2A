@@ -2,9 +2,11 @@
 
 > 상태: 1~4단계 구현·실측 완료 (2026-10-20). Supabase Realtime·Storage 로컬 실연결 검증,
 > 지연 꼬리 원인 규명, 셀 이동 추가 (2026-10-21). 5단계 UI 연결·어드민 콘솔·Claude 전환·
-> docker compose (2026-10-21).
-> 코드: `app/chat/` · 시험: `tests/test_chat_platform.py`(실 Postgres 2대) ·
-> 부하: `scripts/chat_loadtest.py`
+> docker compose (2026-10-21). **데이터 플레인 Rust 이식 (2026-11-07, §8b)** — `/chat/v1`은
+> `rust/chat-engine`(axum)이 직접 서빙하고 나머지 경로만 Python으로 중계한다.
+> 코드: 데이터 플레인 `rust/chat-engine/` · 관리 플레인 `app/chat/`(db·provision·move·worker·
+> platform·archive 쓰기·metrics 읽기) · 시험: `tests/test_chat_platform.py`(실 Postgres 2대,
+> HTTP로 실제 Rust 바이너리를 친다) + `tests/test_rust_parity.py` · 부하: `scripts/chat_loadtest.py`
 
 ## 1. 요구사항 → 결정
 
@@ -108,6 +110,28 @@
 | 주기 작업 | `POST /platform/v1/jobs/tick` (크론, `X-Cron-Secret`) — 분 단위 알림, `daily=true`면 파티션·아카이브·영구 삭제·프로비저닝 정리 |
 
 > ⚠ 법무: 플랫폼 어드민의 본문 열람은 이용약관·개인정보 처리방침에 고지·동의가 필요하다.
+
+## 8b. Rust 데이터 플레인 실측 (2026-11-07 — 같은 기계·같은 DB·같은 부하 생성기로 전/후)
+
+구성: 전 = uvicorn 4 워커(Python), 후 = `a2a-chat` 단일 프로세스(Rust, 셀 풀 합계는 전과 동일 80).
+실부하 = 1,000 SSE 구독 + 초당 200건 × 60초, 유실 0·seq 공백 0은 양쪽 동일.
+
+| 지표 (200건/초 실부하) | Python | Rust |
+|---|---|---|
+| 게시 지연(클라이언트) p50/p95/p99 | 6.3 / 14.7 / 54.1 ms | **4.6 / 8.3 / 29.4 ms** |
+| 서버 처리 p50/p95/p99 | 5.1 / 11.2 / 44.6 ms | **3.7 / 6.5 / 26.5 ms** |
+| 전파 지연 p50/p95/p99 | 0.8 / 1.7 / 4.8 ms | 1.2 / 1.8 / **3.2** ms |
+
+| 포화 처리량 (oha, 동시 64) | Python | Rust |
+|---|---|---|
+| 메시지 목록 GET (50건) | 1,505 rps · p50 41.4ms | **2,743 rps · p50 2.9ms** |
+| 게시 POST (멱등키 없음) | 1,725 rps · p50 26.0ms | **3,050 rps · p50 13.9ms** |
+
+초당 500건 목표 실부하는 **부하 생성기(단일 파이썬 asyncio) 쪽이 먼저 포화**해 서버 비교가
+되지 않았다(생성기 이벤트 루프 지연 경고, 두 서버 모두 비슷한 달성률) — 서버 상한은 위
+oha 수치가 말한다. 처음 측정에서 Rust 첫 10초 p95가 1~2.6초였던 원인 둘:
+accept 소켓에 TCP_NODELAY가 없었고(Nagle+지연 ACK), 단일 프로세스의 셀 풀(20)이 4워커
+합계(80)보다 작아 콜드 스타트에 줄이 섰다 — 둘 다 고치고 재측정한 값이 위 표다.
 
 ## 8. 실측 (로컬: M-series 10코어, Postgres 17 × 2, Redis 1, uvicorn 4 워커 — 전부 한 대)
 

@@ -17,7 +17,7 @@ from .db import SLUG, Tenant, registry
 
 SQL_DIR = Path(__file__).parent / "sql"
 # (버전, 파일). 새 버전은 끝에 추가만 한다 — 이미 배포된 파일은 고치지 않는다.
-MIGRATIONS: list[tuple[int, str]] = [(1, "tenant_v1.sql"), (2, "tenant_v2.sql"), (3, "tenant_v3.sql"), (4, "tenant_v4.sql")]
+MIGRATIONS: list[tuple[int, str]] = [(1, "tenant_v1.sql"), (2, "tenant_v2.sql"), (3, "tenant_v3.sql"), (4, "tenant_v4.sql"), (5, "tenant_v5.sql")]
 LATEST = MIGRATIONS[-1][0]
 
 _IDENT = re.compile(r"^t_[a-z][a-z0-9_]{1,40}$")
@@ -156,22 +156,12 @@ def _drop_cell_schema(t: Tenant) -> None:
 
 
 def _add_member_admin(t: Tenant, uid: str, email: str, role: str, attrs: dict) -> None:
+    # 멤버 upsert + 기본 채널 자동 가입 규칙은 셀의 SQL 함수 add_member(tenant_v5.sql)가
+    # 단일 소스다 — Rust 데이터 플레인의 초대와 같은 함수를 쓴다.
     from psycopg.types.json import Jsonb
     from .db import tenant_admin_tx
     with tenant_admin_tx(t) as conn:
-        conn.execute("""insert into members (user_id, email, display_name, role, attrs)
-                        values (%s, %s, %s, %s, %s)
-                        on conflict (user_id) do update set role = excluded.role,
-                          attrs = excluded.attrs, status = 'active'""",
-                     (uid, email, email.split("@")[0], role, Jsonb(attrs)))
-        # 공개 기본 채널 자동 가입 — 게스트는 제외한다. 채널 멤버십이 곧 열람
-        # 권한이라, 게스트를 자동 가입시키면 '초대받은 채널만'이 무너진다
-        # (실측: 게스트에게 #general이 보였다).
-        if role != "guest":
-            conn.execute("""insert into channel_members (channel_id, user_id)
-                            select id, %s from channels where kind in ('channel','announcements')
-                              and visibility = 'public' and archived_at is null
-                            on conflict do nothing""", (uid,))
+        conn.execute("select add_member(%s, %s, %s, %s)", (uid, email, role, Jsonb(attrs)))
     with registry().control_tx() as c:
         c.execute("""insert into tenant_users (tenant_id, user_id, email) values (%s, %s, %s)
                      on conflict (tenant_id, user_id) do update set email = excluded.email""",

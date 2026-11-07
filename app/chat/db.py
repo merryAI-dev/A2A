@@ -28,6 +28,10 @@ from psycopg_pool import ConnectionPool
 from ..errors import EngineError
 
 ROUTE_TTL = float(os.environ.get("CHAT_ROUTE_TTL", "15"))
+# 테넌트 펜스 SQL — Rust(chat-engine)와 같은 파일(sql/tx_fence.sql)을 읽는다(규칙 사본 금지)
+from pathlib import Path as _Path
+_FENCE_SQL = "\n".join(l for l in (_Path(__file__).parent / "sql" / "tx_fence.sql")
+                        .read_text().splitlines() if not l.strip().startswith("--")).strip()
 SLUG = re.compile(r"^[a-z][a-z0-9_]{1,40}$")
 
 
@@ -208,10 +212,7 @@ def tenant_tx(t: Tenant, uid: str):
             conn.execute(sql.SQL("set local role {}").format(sql.Identifier(t.app_role)))
             # 셀 이동 펜스 확인 — 이미 하던 질의에 얹어 왕복을 늘리지 않는다. 라우팅
             # 캐시가 낡아 옛 셀로 왔다면 여기서 USAGE가 없다(move.py가 회수했다).
-            ok = conn.execute("select set_config('search_path', %s, true), "
-                              "set_config('chat.uid', %s, true), "
-                              "has_schema_privilege(%s, 'USAGE') as ok",
-                              (t.schema, uid, t.schema)).fetchone()["ok"]
+            ok = conn.execute(_FENCE_SQL, (t.schema, uid, t.schema)).fetchone()["ok"]
             if not ok:
                 registry().forget(t.slug)
                 raise EngineError(503, "tenant_moving",

@@ -227,17 +227,13 @@ from .saas.router import router as saas_router   # noqa: E402
 
 from .saas.team import router as team_router     # noqa: E402
 
-from .chat.router import router as chat_router  # noqa: E402
 
 app.include_router(saas_router)
 app.include_router(team_router)
-# 메시징 플랫폼 — CHAT_CONTROL_DSN이 없으면 각 엔드포인트가 config_error(500)로
-# 명시적으로 실패한다(조용한 대체 없음). 기존 SaaS 경로에는 영향이 없다.
-app.include_router(chat_router)
+# 메시징 데이터 플레인(/chat/v1)은 Rust 엔진(rust/chat-engine)이 앞단에서 직접 서빙한다 —
+# 이 앱에는 더 이상 없다(run-mac.sh·Dockerfile이 앞뒤를 잇는다). 관리 플레인은 그대로 여기.
 from .chat.platform_router import router as platform_router  # noqa: E402
 app.include_router(platform_router)
-from .chat.metrics import Middleware as ChatMetrics  # noqa: E402
-app.add_middleware(ChatMetrics)
 
 
 @app.get("/healthz")

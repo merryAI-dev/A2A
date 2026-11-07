@@ -127,41 +127,5 @@ def quantile(hist: list[int], q: float) -> "float | None":
             return float(BOUNDS[i]) if i < len(BOUNDS) else float("inf")
     return float("inf")
 
-
-class Middleware:
-    """ASGI 미들웨어 — 처리 시간을 재고 X-Server-Ms 헤더를 붙인다. SSE는 연결
-    수명이 길어 지연 히스토그램을 오염시키므로 '연결 수'로만 센다."""
-
-    def __init__(self, app):
-        self.app = app
-
-    async def __call__(self, scope, receive, send):
-        if scope["type"] != "http":
-            return await self.app(scope, receive, send)
-        path, method = scope.get("path", ""), scope.get("method", "")
-        group = route_group(method, path)
-        if group is None:
-            return await self.app(scope, receive, send)
-        m = _SLUG.match(path)
-        slug = m.group(1) if m else None
-        t0 = time.perf_counter()
-        recv_wall = time.time()           # 진단: 앱이 요청을 받은 벽시계 시각
-        status = {"code": 500}
-
-        async def _send(msg):
-            if msg["type"] == "http.response.start":
-                status["code"] = msg["status"]
-                ms = (time.perf_counter() - t0) * 1000
-                msg.setdefault("headers", [])
-                extra = [(b"x-server-ms", f"{ms:.1f}".encode())]
-                if _DIAG:
-                    # 진단 전용 — 프로세스 id·수신 시각은 내부 정보라 기본으로 내보내지 않는다
-                    extra += [(b"x-worker", _PID), (b"x-server-recv", f"{recv_wall:.6f}".encode())]
-                msg["headers"] = list(msg["headers"]) + extra
-                if slug and group != "stream":
-                    record(slug, group, ms, status["code"] >= 500)
-                elif slug:
-                    record(slug, "stream", 0.0, status["code"] >= 400)
-            await send(msg)
-
-        await self.app(scope, receive, _send)
+# HTTP 기록 미들웨어는 Rust 데이터 플레인(rust/chat-engine/src/metrics.rs)이 맡는다.
+# BOUNDS를 바꾸면 양쪽을 함께 — tests/test_rust_parity.py가 `a2a-chat print-config`와 대조한다.

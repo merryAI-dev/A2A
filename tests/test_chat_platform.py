@@ -16,7 +16,7 @@ import psycopg
 import pytest
 from psycopg import sql
 
-from app.chat import authz
+from tests import chat_http as authz
 from app.errors import EngineError
 
 PG_A = os.environ.get("CHAT_TEST_PG_A")
@@ -138,7 +138,7 @@ class TestPlacementAndIsolation:
 
 class TestVisibility:
     def test_private_channel_hidden_from_non_members(self, plat):
-        from app.chat import service as svc
+        from tests import chat_http as svc
         t = plat["acme"]
         svc.add_member(t, "acme_owner", "alice", "alice@acme.com")
         svc.add_member(t, "acme_owner", "bob", "bob@acme.com")
@@ -157,7 +157,7 @@ class TestVisibility:
         assert svc.list_messages(t, "bob", ch["id"])["messages"][0]["body"] == "기밀 단가 12%"
 
     def test_member_cannot_add_people_to_private_channel(self, plat):
-        from app.chat import service as svc
+        from tests import chat_http as svc
         t = plat["acme"]
         svc.add_member(t, "acme_owner", "carol", "carol@acme.com")
         ch = svc.create_channel(t, "alice", "alice-only", visibility="private")
@@ -167,7 +167,7 @@ class TestVisibility:
         assert e.value.http_status == 403
 
     def test_guest_sees_only_invited_channels(self, plat):
-        from app.chat import service as svc
+        from tests import chat_http as svc
         t = plat["acme"]
         svc.add_member(t, "acme_owner", "vendor", "rep@vendor.com", role="guest")
         names = [c["name"] for c in svc.list_channels(t, "vendor")]
@@ -180,7 +180,7 @@ class TestVisibility:
             svc.post_message(t, "vendor", gen["id"], "hi")
 
     def test_deactivated_member_loses_everything(self, plat):
-        from app.chat import service as svc
+        from tests import chat_http as svc
         t = plat["acme"]
         svc.add_member(t, "acme_owner", "leaver", "leaver@acme.com")
         gen = _ch(svc, t, "leaver", "general")
@@ -195,7 +195,7 @@ class TestVisibility:
             svc.post_message(t, "leaver", gen["id"], "아직 있나요")
 
     def test_cross_tenant_user_is_not_a_member(self, plat):
-        from app.chat import service as svc
+        from tests import chat_http as svc
         with pytest.raises(EngineError) as e:
             svc.list_channels(plat["globex"], "alice")
         assert e.value.http_status == 403
@@ -215,7 +215,7 @@ class TestAbac:
             authz.validate_condition({"lol": [1]})
 
     def test_deny_overrides_role(self, plat):
-        from app.chat import service as svc
+        from tests import chat_http as svc
         t = plat["acme"]
         ch = svc.create_channel(t, "alice", "finance", attrs={"department": "finance"})
         svc.update_member(t, "acme_owner", "bob", attrs={"department": "sales"})
@@ -231,7 +231,7 @@ class TestAbac:
         svc.remove_policy(t, "acme_owner", pid)
 
     def test_allow_policy_grants_beyond_role(self, plat):
-        from app.chat import service as svc
+        from tests import chat_http as svc
         t = plat["acme"]
         svc.add_member(t, "acme_owner", "lead", "lead@acme.com", attrs={"title": "lead"})
         ch = svc.create_channel(t, "alice", "lead-can-archive")
@@ -243,19 +243,19 @@ class TestAbac:
         assert "lead-can-archive" not in [c["name"] for c in svc.list_channels(t, "alice")]
 
     def test_invalid_policy_rejected_at_save(self, plat):
-        from app.chat import service as svc
+        from tests import chat_http as svc
         with pytest.raises(EngineError) as e:
             svc.add_policy(plat["acme"], "acme_owner", "deny", ["message.post"], {"xor": []})
         assert e.value.http_status == 400
 
     def test_policy_management_requires_permission(self, plat):
-        from app.chat import service as svc
+        from tests import chat_http as svc
         with pytest.raises(EngineError) as e:
             svc.add_policy(plat["acme"], "bob", "allow", ["*"], {})
         assert e.value.http_status == 403
 
     def test_only_owner_creates_star_role(self, plat):
-        from app.chat import service as svc
+        from tests import chat_http as svc
         t = plat["acme"]
         svc.add_member(t, "acme_owner", "adm", "adm@acme.com", role="admin")
         with pytest.raises(EngineError):
@@ -265,7 +265,7 @@ class TestAbac:
             svc.upsert_role(t, "adm", "weird", ["message.fly"])
 
     def test_last_owner_protected(self, plat):
-        from app.chat import service as svc
+        from tests import chat_http as svc
         t = plat["acme"]
         with pytest.raises(EngineError) as e:
             svc.update_member(t, "acme_owner", "acme_owner", role="admin")
@@ -274,7 +274,7 @@ class TestAbac:
             svc.update_member(t, "acme_owner", "acme_owner", active=False)
 
     def test_moderation_is_audited(self, plat):
-        from app.chat import service as svc
+        from tests import chat_http as svc
         t = plat["acme"]
         gen = _ch(svc, t, "alice", "general")
         m = svc.post_message(t, "bob", gen["id"], "스팸 링크")
@@ -293,7 +293,7 @@ class TestCollect:
     @pytest.fixture(autouse=True)
     def _members(self, plat):
         # 이 묶음만 따로 돌려도 되게 — 앞 시험이 멤버를 만들어 두었으면 그대로 쓴다
-        from app.chat import service as svc
+        from tests import chat_http as svc
         for uid in ("cl_bob", "cl_alice"):
             try:
                 svc.add_member(plat["acme"], "acme_owner", uid, f"{uid}@acme.com")
@@ -304,7 +304,7 @@ class TestCollect:
           "data": {"tool": "read_page", "ok": True, "input": {"url": "https://secret.example"}}}
 
     def test_signals_strip_content_and_dedupe(self, plat):
-        from app.chat import collect
+        from tests import chat_http as collect
         t = plat["acme"]
         assert collect.ingest(t, "cl_bob", "signals", [self.EV])["accepted"] == 1
         assert collect.ingest(t, "cl_bob", "signals", [self.EV])["duplicates"] == 1           # 재전송 안전
@@ -315,7 +315,7 @@ class TestCollect:
         assert body["data"] == {"tool": "read_page", "ok": True}
 
     def test_hashes_keep_host_only(self, plat):
-        from app.chat import collect
+        from tests import chat_http as collect
         from app.chat.db import tenant_admin_tx
         t = plat["acme"]
         ev = {**self.EV, "event_id": "ev_c_2"}
@@ -325,7 +325,7 @@ class TestCollect:
         assert body["content_hash"] == ev["content_hash"] and body["source_host"] == "secret.example" and "source_url" not in body
 
     def test_cannot_upload_others_events_or_bad_blobs(self, plat):
-        from app.chat import collect
+        from tests import chat_http as collect
         t = plat["acme"]
         with pytest.raises(EngineError) as e:
             collect.ingest(t, "cl_bob", "signals", [{**self.EV, "event_id": "ev_c_3", "user": "cl_alice"}])
@@ -341,7 +341,7 @@ class TestCollect:
             collect.ingest(t, "nobody", "signals", [{**self.EV, "event_id": "ev_c_4", "user": "nobody"}])
 
     def test_rls_mine_only(self, plat):
-        from app.chat import collect
+        from tests import chat_http as collect
         t = plat["acme"]
         collect.ingest(t, "cl_bob", "signals", [{**self.EV, "event_id": "ev_c_5"}])
         assert collect.summary(t, "cl_alice")["mine"]["events"] == 0          # 남이 올린 것은 내 것으로 안 보인다(RLS)
@@ -350,7 +350,7 @@ class TestCollect:
 
 class TestProfile:
     def test_member_renames_self_and_is_audited(self, plat):
-        from app.chat import service as svc
+        from tests import chat_http as svc
         t = plat["acme"]
         out = svc.update_me(t, "bob", display_name="  밥   스미스 ")
         assert out["display_name"] == "밥 스미스"                    # 공백 정리
@@ -360,7 +360,7 @@ class TestProfile:
         assert any(l["action"] == "profile.update" and l["target"] == "bob" for l in logs)
 
     def test_invalid_name_rejected(self, plat):
-        from app.chat import service as svc
+        from tests import chat_http as svc
         t = plat["acme"]
         for bad in ("", "   ", "가" * 41):
             with pytest.raises(EngineError) as e:
@@ -368,7 +368,7 @@ class TestProfile:
             assert e.value.http_status == 400
 
     def test_avatar_color_visible_to_team(self, plat):
-        from app.chat import service as svc
+        from tests import chat_http as svc
         t = plat["acme"]
         before = svc.me(t, "bob")["display_name"]
         out = svc.update_me(t, "bob", avatar_hue=200)
@@ -384,7 +384,7 @@ class TestProfile:
             svc.update_me(t, "bob")
 
     def test_non_member_cannot_rename(self, plat):
-        from app.chat import service as svc
+        from tests import chat_http as svc
         with pytest.raises(EngineError):
             svc.update_me(plat["acme"], "glx_owner", display_name="침입자")
         with pytest.raises(EngineError):                             # 비활성화된 멤버도
@@ -412,7 +412,7 @@ def _hammer(n_threads, fn):
 
 class TestConcurrency:
     def test_concurrent_posts_get_contiguous_unique_seq(self, plat):
-        from app.chat import service as svc
+        from tests import chat_http as svc
         t = plat["globex"]
         for i in range(10):
             svc.add_member(t, "glx_owner", f"u{i}", f"u{i}@globex.com")
@@ -434,7 +434,7 @@ class TestConcurrency:
         assert page["has_more"] is True
 
     def test_idempotent_retry_under_race(self, plat):
-        from app.chat import service as svc
+        from tests import chat_http as svc
         t = plat["globex"]
         ch = _ch(svc, t, "u0", "load")
         before = ch["last_seq"]
@@ -455,7 +455,7 @@ class TestConcurrency:
 
     def test_duplicate_after_reply_keeps_unread_state(self, plat):
         """회귀: 직전 메시지가 답글일 때 중복 재시도가 last_top_seq를 망가뜨리지 않는다."""
-        from app.chat import service as svc
+        from tests import chat_http as svc
         t = plat["globex"]
         ch = svc.create_channel(t, "u5", "dup-after-reply")
         cid = uuid.uuid4().hex
@@ -470,7 +470,7 @@ class TestConcurrency:
             (before["last_seq"], before["last_top_seq"]) == (3, 1)
 
     def test_thread_reply_count_has_no_lost_updates(self, plat):
-        from app.chat import service as svc
+        from tests import chat_http as svc
         t = plat["globex"]
         ch = _ch(svc, t, "u0", "load")
         root = svc.post_message(t, "u0", ch["id"], "스레드 루트")
@@ -486,7 +486,7 @@ class TestConcurrency:
         assert [m["seq"] for m in main["messages"]] == [root["seq"]]   # 답글은 본문에 안 섞임
 
     def test_mentions_counted_without_counters(self, plat):
-        from app.chat import service as svc
+        from tests import chat_http as svc
         t = plat["globex"]
         ch = _ch(svc, t, "u0", "load")
 
@@ -500,14 +500,14 @@ class TestConcurrency:
         assert st["mentions"] == 0 and st["unread"] is False
 
     def test_read_cursor_never_moves_backwards(self, plat):
-        from app.chat import service as svc
+        from tests import chat_http as svc
         t = plat["globex"]
         ch = _ch(svc, t, "u2", "load")
         assert svc.mark_read(t, "u2", ch["id"], 400) == 400
         assert svc.mark_read(t, "u2", ch["id"], 10) == 400
 
     def test_cursor_pagination_and_gap_fill(self, plat):
-        from app.chat import service as svc
+        from tests import chat_http as svc
         t = plat["globex"]
         ch = svc.create_channel(t, "u3", "pages")
         for i in range(30):
@@ -520,7 +520,7 @@ class TestConcurrency:
         assert [m["seq"] for m in gap["messages"]] == [26, 27, 28, 29, 30]
 
     def test_posting_to_archived_channel_fails(self, plat):
-        from app.chat import service as svc
+        from tests import chat_http as svc
         t = plat["globex"]
         ch = svc.create_channel(t, "u4", "temp")
         svc.archive_channel(t, "u4", ch["id"])
@@ -592,7 +592,8 @@ def arch_dir(tmp_path_factory):
 @pytest.mark.usefixtures("arch_dir")
 class TestArchive:
     def test_roundtrip_and_seamless_pagination(self, plat):
-        from app.chat import archive, service as svc
+        from app.chat import archive
+        from tests import chat_http as svc
         from app.chat.db import tenant_admin_tx
         t = plat["acme"]
         ch, month = _seed_old(t, svc, "history", 30)
@@ -620,7 +621,8 @@ class TestArchive:
 
     def test_rearchiving_same_month_never_overwrites(self, plat):
         """회귀: 같은 달에 늦게 들어온 행을 다시 보관해도 앞서 보관한 30건이 남는다."""
-        from app.chat import archive, service as svc
+        from app.chat import archive
+        from tests import chat_http as svc
         t = plat["acme"]
         late, _ = _seed_old(t, svc, "late-arrivals", 4)
         archive.archive_tenant(t)
@@ -634,7 +636,8 @@ class TestArchive:
         assert archive.archive_tenant(plat["acme"]) == []
 
     def test_archived_private_channel_stays_private(self, plat):
-        from app.chat import archive, service as svc
+        from app.chat import archive
+        from tests import chat_http as svc
         t = plat["acme"]
         ch, _ = _seed_old(t, svc, "old-secret", 5, private=True, owner="alice")
         archive.archive_tenant(t)
@@ -644,7 +647,8 @@ class TestArchive:
         assert len(svc.list_messages(t, "alice", ch["id"])["messages"]) == 5
 
     def test_verify_failure_keeps_partition(self, plat, monkeypatch):
-        from app.chat import archive, service as svc
+        from app.chat import archive
+        from tests import chat_http as svc
         from app.chat.db import tenant_admin_tx
         t = plat["globex"]
         ch, month = _seed_old(t, svc, "fragile", 3, owner="glx_owner")
@@ -661,12 +665,13 @@ class TestArchive:
         assert archive.archive_month(t, month)["status"] == "archived"
 
     def test_export_requires_permission_and_includes_archive(self, plat):
-        from app.chat import archive, service as svc
+        from app.chat import archive
+        from tests import chat_http as svc
         t = plat["acme"]
         ch = next(c for c in svc.list_channels(t, "acme_owner") if c["name"] == "history")
         with pytest.raises(EngineError):
-            archive.export_channel(t, "bob", ch["id"])
-        lines = list(archive.export_channel(t, "acme_owner", ch["id"]))
+            svc.export_channel(t, "bob", ch["id"])
+        lines = list(svc.export_channel(t, "acme_owner", ch["id"]))
         assert len(lines) == 35
 
     def test_purge_respects_legal_hold(self, plat):
@@ -705,7 +710,8 @@ class TestPlatform:
             pf.add_admin("op", "x", "x@p.io", "superadmin")   # operator: 어드민 관리 불가
 
     def test_content_access_is_audited_on_both_sides(self, plat):
-        from app.chat import platform as pf, service as svc
+        from app.chat import platform as pf
+        from tests import chat_http as svc
         t = plat["acme"]
         gen = next(c for c in svc.list_channels(t, "alice") if c["name"] == "general")
         svc.post_message(t, "alice", gen["id"], "어드민이 볼 수 있는 글")
@@ -718,14 +724,16 @@ class TestPlatform:
         assert logs[0]["actor"] == "op" and logs[0]["actor_kind"] == "platform_admin"
 
     def test_admin_reads_private_channels_too(self, plat):
-        from app.chat import platform as pf, service as svc
+        from app.chat import platform as pf
+        from tests import chat_http as svc
         t = plat["acme"]
         priv = next(c for c in svc.list_channels(t, "alice") if c["name"] == "secret-deal")
         res = pf.admin_messages("op", "acme", priv["id"], reason="감사")
         assert res["messages"][0]["body"] == "기밀 단가 12%"
 
     def test_suspend_blocks_users(self, plat):
-        from app.chat import platform as pf, service as svc
+        from app.chat import platform as pf
+        from tests import chat_http as svc
         from app.chat.db import registry
         pf.set_tenant("op", "globex", status="suspended", reason="미납")
         with pytest.raises(EngineError) as e:
@@ -738,7 +746,8 @@ class TestPlatform:
         assert svc.list_channels(registry().tenant("globex"), "u1")
 
     def test_announcement_across_cells_with_partial_failure_and_retry(self, plat):
-        from app.chat import platform as pf, service as svc
+        from app.chat import platform as pf
+        from tests import chat_http as svc
         from app.chat.db import registry, tenant_admin_tx
         # 한 테넌트의 공지 채널을 망가뜨려 그 셀 전달이 실패하게 한다
         t = registry().tenant("initech")
@@ -843,7 +852,8 @@ class TestMove:
                 c.execute("delete from tenant_moves where id = %s", (mid,))
 
     def test_failed_verify_rolls_back_cleanly(self, plat, monkeypatch):
-        from app.chat import move, service as svc
+        from app.chat import move
+        from tests import chat_http as svc
         from app.chat.db import registry
         real = move._checksums
         calls = {"n": 0}
@@ -870,7 +880,8 @@ class TestMove:
                              (t.id,)).fetchone()["state"] == "rolled_back"
 
     def test_move_under_live_writes_loses_nothing(self, plat):
-        from app.chat import move, service as svc
+        from app.chat import move
+        from tests import chat_http as svc
         from app.chat.db import registry, tenant_admin_tx
         slug = "acme"
         t_old = registry().tenant(slug)
@@ -930,9 +941,13 @@ class TestMove:
               f"delta={rep['delta_messages']} acked={len(ok)} retried={len(fails)} "
               f"rows={sum(rep['rows'].values())}")
         assert rep["write_pause_sec"] < 5 and "delta_messages" in rep
-        # 캐시가 낡은 인스턴스(옛 셀)로 오는 쓰기는 DB 펜스가 거부한다
+        # 캐시가 낡은 인스턴스(옛 셀)로 오는 쓰기는 DB 펜스가 거부한다.
+        # HTTP 계층은 slug로 현재 배치를 다시 찾으므로, 낡은 Tenant를 쥔 인스턴스는
+        # 펜스 트랜잭션(tx_fence.sql — Rust도 같은 파일)을 직접 열어 검증한다.
+        from app.chat.db import tenant_tx
         with pytest.raises(EngineError) as e:
-            svc.post_message(t_old, "alice", chans[0]["id"], "옛 셀로 가는 글")
+            with tenant_tx(t_old, "alice") as conn:
+                conn.execute("select 1")
         assert e.value.code == "tenant_moving"
         # 권한·읽음·멘션·아카이브가 그대로다
         after_view = {c["name"]: c for c in svc.list_channels(t_new, "alice")}
@@ -950,7 +965,8 @@ class TestMove:
         TestMove.move_id = rep["move_id"]
 
     def test_finalize_drops_source(self, plat):
-        from app.chat import move, service as svc
+        from app.chat import move
+        from tests import chat_http as svc
         from app.chat.db import registry
         res = move.finalize(TestMove.move_id, "root")
         assert res["dropped"] == "a:t_acme"
@@ -965,7 +981,7 @@ class TestMove:
 
 class TestUiQueries:
     def test_me_reports_role_and_capabilities(self, plat):
-        from app.chat import service as svc
+        from tests import chat_http as svc
         from app.chat.db import registry
         t = registry().tenant("globex")
         owner = svc.me(t, "glx_owner")
@@ -975,7 +991,7 @@ class TestUiQueries:
         assert member["can"]["channel.create"] is True
 
     def test_member_list_respects_guest_visibility(self, plat):
-        from app.chat import service as svc
+        from tests import chat_http as svc
         from app.chat.db import registry
         t = registry().tenant("globex")
         svc.add_member(t, "glx_owner", "g_guest", "g@out.side", role="guest")
@@ -983,7 +999,7 @@ class TestUiQueries:
         assert [m["user_id"] for m in svc.list_members(t, "g_guest")] == ["g_guest"]
 
     def test_roles_listing_has_catalog(self, plat):
-        from app.chat import service as svc
+        from tests import chat_http as svc
         from app.chat.db import registry
         r = svc.list_roles(registry().tenant("globex"), "u1")
         assert {x["name"] for x in r["roles"]} >= {"owner", "admin", "member", "guest"}
@@ -992,7 +1008,7 @@ class TestUiQueries:
 
 def test_thread_root_has_message_shape(plat):
     """회귀: 스레드 루트에 reactions가 빠져 웹 화면이 TypeError로 터졌다."""
-    from app.chat import service as svc
+    from tests import chat_http as svc
     from app.chat.db import registry
     t = registry().tenant("globex")
     ch = svc.create_channel(t, "u6", "root-shape")
@@ -1053,7 +1069,7 @@ class TestAdminConsoleFixes:
 # ── 셀 이동 — 배경 작업자 ───────────────────────────────────────────
 
 def _can_write(slug, uid, cname):
-    from app.chat import service as svc
+    from tests import chat_http as svc
     from app.chat.db import registry
     registry().forget(slug)
     t = registry().tenant(slug)
