@@ -88,6 +88,10 @@ const TOOLS = [
   { name: 'list_channels', description: 'A2A 워크스페이스의 채널 목록을 본다.', input_schema: S({}, []) },
   { name: 'post_to_channel', description: 'A2A 채널에 메시지를 올린다(사용자 승인 필요). channel은 채널 이름.',
     input_schema: S({ channel: { type: 'string' }, text: { type: 'string' } }, ['channel', 'text']) },
+  { name: 'find_contacts', description: '회사 도메인의 공개 페이지에서 법인 메일을 발굴·검증한다(엔진 경유, 출처 포함). '
+      + 'found=페이지에서 실제로 본 주소, pattern=이름+패턴 추측 — 둘을 섞어 말하지 말 것. 사람 이름(로마자)을 알면 person_first/person_last를 준다.',
+    input_schema: S({ domain: { type: 'string' }, company: { type: 'string' },
+                      person_first: { type: 'string' }, person_last: { type: 'string' } }, ['domain']) },
 ].map((t) => ({ ...t, eager_input_streaming: true }));
 
 // 스트리밍 도구 입력은 서버가 검증하지 않는다 — 스키마대로 왔는지 직접 본다.
@@ -365,6 +369,9 @@ export class Agent {
         const chs = await h.chat.channels();
         return chs.map((c) => `#${c.name}${c.visibility === 'private' ? ' (비공개)' : ''}${c.topic ? ' — ' + c.topic : ''}`).join('\n');
       }
+      case 'find_contacts': {
+        return h.findContacts(input);      // tasks.js — 엔진 조회 + 업무 기록(근거)
+      }
       case 'post_to_channel': {
         const nm = input.channel.replace(/^#/, '');
         const ch = (await h.chat.channels()).find((c) => c.name === nm);
@@ -409,6 +416,7 @@ Agent.prototype.execReplay = async function execReplay(name, input) {
       return `재현 모드: 입력하지 않음(했다고 가정)${input.submit ? ' + 엔터' : ''}`;
     }
     case 'select_option': case 'scroll': return '재현 모드: 실행하지 않음(했다고 가정)';
+    case 'find_contacts': return '재현 모드: 외부 조회는 실행하지 않습니다 — 기록된 근거(원문)를 참고하세요';
     case 'create_page': { await h.createPage(input); return `결과 페이지(재현): "${input.title}"`; }
     case 'list_channels': {
       const chs = await h.chat.channels();

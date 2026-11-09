@@ -236,6 +236,9 @@ app.include_router(team_router)
 app.include_router(chat_router)
 from .chat.platform_router import router as platform_router  # noqa: E402
 app.include_router(platform_router)
+# 접점 발굴(법인 메일) — 구독 없이 공개 페이지에서 직접 (app/contacts/)
+from .contacts.router import router as contacts_router  # noqa: E402
+app.include_router(contacts_router)
 from .chat.metrics import Middleware as ChatMetrics  # noqa: E402
 app.add_middleware(ChatMetrics)
 
