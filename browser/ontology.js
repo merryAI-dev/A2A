@@ -15,10 +15,10 @@ const path = require('path');
 const TYPES = {
   person: '사람', agent: '에이전트', task: '작업', step: '단계', source: '원문', output: '산출물',
   approval: '승인', channel: '채널', message: '메시지', site: '사이트', platform: '플랫폼', company: '기업',
-  harness: '하네스', signal: '신호', lesson: '교훈', probe: '재실행', worktype: '업무 유형',
+  harness: '하네스', signal: '신호', lesson: '교훈', probe: '재실행', worktype: '업무 유형', contact: '연락처',
 };
 const REL = {
-  instructed: '지시함', ran_with: '하네스로 실행', called_in: '에서 불림', used_context: '맥락으로 붙임',
+  mentions_contact: '연락처 확인', instructed: '지시함', ran_with: '하네스로 실행', called_in: '에서 불림', used_context: '맥락으로 붙임',
   has_step: '단계', performed: '수행함', read: '읽음', visited: '방문함', queried: '조회함', hosted_on: '위치',
   from_platform: '출처 플랫폼', mentions_company: '기업 언급', viewed: '봄', selected: '골라 냄', within: '안의 구간',
   produced: '만듦', derived_from: '근거', reused: '다시 씀', asked_approval: '승인 요청', decided: '결정함', gated_by: '승인 대상',
@@ -160,6 +160,11 @@ function createOntology({ root, taskInfo = () => null }) {
         if (isTool) {
           const p = node(`platform:${ev.platform}`, 'platform', ev.platform === 'ema-station' ? 'EMA Station' : ev.platform, {}, at).id;
           edge(src, 'from_platform', p, ev);
+          if (ev.platform === 'a2a-engine') {
+            for (const m of blobText(ev.content_hash, 200000).matchAll(/^- (\S+@\S+) \[found([^\]]*)\] 검증=(\S+)/gm)) {
+              edge(src, 'mentions_contact', node(`contact:${m[1]}`, 'contact', m[1], { generic: m[2].includes('대표주소'), verify: m[3] }, at).id, ev);
+            }
+          }
           for (const c of companiesIn(blobText(ev.content_hash, 200000))) {
             edge(src, 'mentions_company', node(`company:${c.frn}`, 'company', c.name, { frn: c.frn }, at).id, ev);
           }

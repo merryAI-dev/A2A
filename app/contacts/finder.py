@@ -18,8 +18,10 @@ import re
 import secrets
 import smtplib
 import socket
+import time
 from collections import Counter
 from urllib.parse import urljoin, urlsplit
+from urllib.robotparser import RobotFileParser
 
 import httpx
 from bs4 import BeautifulSoup
@@ -27,7 +29,8 @@ from bs4 import BeautifulSoup
 from ..errors import EngineError
 from ..ingest import netguard
 
-MAX_PAGES = 6
+MAX_PAGES = 12
+DEADLINE = float(os.environ.get("CONTACTS_DEADLINE", "45"))      # 요청 하나가 쓰는 전체 시간 상한(초)
 MAX_BYTES = 2 * 1024 * 1024
 TIMEOUT = float(os.environ.get("CONTACTS_FETCH_TIMEOUT", "10"))
 
@@ -36,12 +39,21 @@ EMAIL = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
 OBFUSCATED = re.compile(
     r"([A-Za-z0-9._%+\-]+)\s*[\[(（{]\s*(?:at|골뱅이)\s*[\])）}]\s*([A-Za-z0-9.\-]+)"
     r"\s*(?:[\[(（{]\s*(?:dot|닷)\s*[\])）}]\s*([A-Za-z]{2,}))?", re.I)
-CONTACT_HINT = re.compile(r"contact|about|company|support|recruit|press|inquiry|"
-                          r"문의|연락|상담|회사소개|회사 소개|소개|오시는|고객센터|제휴", re.I)
+# 링크 우선순위 — 연락처가 있을 법한 순서. 0점 링크는 따라가지 않는다.
+_HINTS = [(3, re.compile(r"contact|inquiry|enquir|partner|문의|연락|상담|제휴|협력|오시는", re.I)),
+          (2, re.compile(r"about|company|team|people|member|consult|회사|소개|구성원|조직|컨설팅", re.I)),
+          (1, re.compile(r"press|news|media|recruit|career|service|support|business|"
+                         r"보도|뉴스|채용|서비스|사업|고객센터", re.I))]
+SKIP_FILE = re.compile(r"\.(pdf|jpe?g|png|gif|svg|webp|zip|mp4|css|js|ico|xml)(\?|$)", re.I)
+# 자바스크립트로 그리는 사이트는 <a>가 없다 — 페이지 데이터(JSON) 속 내부 경로에서 줍는다(실측: anthropic.com)
+EMBEDDED_PATH = re.compile(r"""[\"'](/[A-Za-z0-9_\-/]{2,80})\\?[\"']""")
+# 링크를 하나도 못 줍는 사이트용 — 없으면 조용히 넘어간다(실패로 세지 않는다)
+GUESS_PATHS = ["/contact", "/contact-us", "/about", "/company", "/team", "/partners", "/inquiry"]
 GENERIC_LOCAL = re.compile(r"^(info|contact|hello|sales|support|admin|office|master|webmaster|"
                            r"help|cs|pr|hr|biz|business|partner|marketing|service|mail|post)[0-9]*$", re.I)
 # 긁어도 의미 없는 주소 — 예시·플랫폼 잡음
-NOISE_DOMAIN = re.compile(r"(example\.(com|org|net)|sentry|wixpress|googlemail|@[0-9.]+$)", re.I)
+NOISE_DOMAIN = re.compile(r"(example\.(com|org|net)|sentry|wixpress|googlemail|@[0-9.]+$|"
+                          r"@(your)?domain\.|@email\.com$|@test\.|@company\.com$)", re.I)
 IMAGEY = re.compile(r"\.(png|jpe?g|gif|svg|webp)$", re.I)
 
 
@@ -57,8 +69,14 @@ def _norm_base(domain: str) -> str:
     return f"{parts.scheme}://{parts.netloc}"
 
 
+# 국가 도메인의 2단계 공개 접미사(co.kr·or.jp·com.vn …) — 여기를 놓치면 등록 도메인이 'co.kr'로 잘린다
+_SECOND_LEVEL = {"co", "or", "ne", "re", "go", "ac", "pe", "ed", "com", "org", "net", "edu", "gov"}
+
+
 def _root_domain(host: str) -> str:
     bits = host.lower().removeprefix("www.").split(":")[0].split(".")
+    if len(bits) >= 3 and len(bits[-1]) == 2 and bits[-2] in _SECOND_LEVEL:
+        return ".".join(bits[-3:])
     return ".".join(bits[-2:]) if len(bits) >= 2 else host.lower()
 
 
@@ -84,20 +102,61 @@ def _emails_in(html: str, page_url: str) -> list[dict]:
     return out
 
 
+def _score(label: str) -> int:
+    return next((n for n, rx in _HINTS if rx.search(label)), 0)
+
+
 def _links(html: str, base: str) -> list[str]:
+    """같은 회사(등록 도메인)의 연락처 후보 링크를 우선순위 순으로."""
     soup = BeautifulSoup(html, "html.parser")
-    seen, out = set(), []
-    host = urlsplit(base).hostname
+    root = _root_domain(urlsplit(base).hostname)
+    scored: dict[str, int] = {}
+
+    def offer(u: str, label: str):
+        u = u.split("#")[0]
+        h = urlsplit(u).hostname
+        if not h or _root_domain(h) != root or SKIP_FILE.search(u) or u.rstrip("/") == base.rstrip("/"):
+            return
+        n = _score(label)
+        if n:
+            scored[u] = max(n, scored.get(u, 0))
+
     for a in soup.find_all("a", href=True):
-        label = f"{a.get_text(' ', strip=True)} {a['href']}"
-        if not CONTACT_HINT.search(label):
+        offer(urljoin(base + "/", a["href"]), f"{a.get_text(' ', strip=True)} {a['href']}")
+    for m in EMBEDDED_PATH.finditer(html):
+        offer(urljoin(base + "/", m.group(1)), m.group(1))
+    return sorted(scored, key=lambda u: (-scored[u], len(u)))
+
+
+LOC = re.compile(r"<loc>\s*([^<\s]+)\s*</loc>", re.I)
+
+
+def _sitemap_urls(fetch, base: str, extra: "list[str]") -> list[str]:
+    """sitemap.xml(+색인의 하위 몇 개)에서 연락처 후보 — 메뉴에 없는 페이지를 찾는 길."""
+    root = _root_domain(urlsplit(base).hostname)
+    todo, out = [*extra, f"{base}/sitemap.xml"], []
+    for _ in range(4):
+        if not todo:
+            break
+        r = fetch(todo.pop(0))
+        if r is None:
             continue
-        u = urljoin(base + "/", a["href"].split("#")[0])
-        if urlsplit(u).hostname != host or u in seen or u.rstrip("/") == base:
-            continue
-        seen.add(u)
-        out.append(u)
-    return out
+        for loc in LOC.findall(r.text):
+            if loc.lower().split("?")[0].endswith(".xml"):
+                todo.append(loc)
+            elif urlsplit(loc).hostname and _root_domain(urlsplit(loc).hostname) == root and _score(loc):
+                out.append(loc)
+    return sorted(set(out), key=lambda u: (-_score(u), len(u)))
+
+
+def _robots(fetch, base: str) -> "tuple[RobotFileParser | None, list[str]]":
+    r = fetch(f"{base}/robots.txt")
+    if r is None:
+        return None, []
+    rp = RobotFileParser()
+    lines = r.text.splitlines()
+    rp.parse(lines)
+    return rp, [ln.split(":", 1)[1].strip() for ln in lines if ln.lower().startswith("sitemap:")]
 
 
 # ── 패턴 추론 ─────────────────────────────────────────────────────────
@@ -194,26 +253,55 @@ def discover(domain: str, person: "dict | None" = None, *,
 
     pages, found, errors = [], [], []
     retried_www = False
-    try:
-        def crawl(start):
-            queue, visited = [start], set()
-            while queue and len(visited) < MAX_PAGES:
-                url = queue.pop(0)
-                if url in visited:
-                    continue
-                visited.add(url)
-                try:
-                    r = netguard.get(client, url, total_timeout=TIMEOUT * 2, max_bytes=MAX_BYTES)
-                    r.raise_for_status()
-                except httpx.HTTPError as e:
-                    errors.append({"url": url, "error": str(e)[:160]})
-                    continue
-                html = r.text
-                pages.append({"url": url, "bytes": len(html)})
-                found.extend(_emails_in(html, url))
-                if url == start:
-                    queue += _links(html, start)[: MAX_PAGES - 1]
+    skipped_robots = 0
+    t_end = time.monotonic() + DEADLINE
 
+    def fetch(url, record=False):
+        """응답 또는 None. record=True인 것(실제 링크)만 실패로 센다 — 찍어 본 경로의 404는 실패가 아니다."""
+        if time.monotonic() > t_end:
+            return None
+        try:
+            r = netguard.get(client, url, total_timeout=TIMEOUT * 2, max_bytes=MAX_BYTES)
+            r.raise_for_status()
+            return r
+        except httpx.HTTPError as e:
+            if record:
+                errors.append({"url": url, "error": str(e)[:160]})
+            return None
+
+    def crawl(start):
+        nonlocal skipped_robots
+        home = fetch(start, record=True)
+        if home is None:
+            return
+        rp, maps = _robots(fetch, start)
+        visited = {start, str(home.url).rstrip("/")}
+        pages.append({"url": start, "bytes": len(home.text)})
+        found.extend(_emails_in(home.text, start))
+        queue = _links(home.text, str(home.url).rstrip("/"))
+        queue += [u for u in _sitemap_urls(fetch, start, maps) if u not in queue]
+        guesses = [f"{start}{p}" for p in GUESS_PATHS]
+        while (queue or guesses) and len(pages) < MAX_PAGES and time.monotonic() < t_end:
+            guess = not queue
+            url = guesses.pop(0) if guess else queue.pop(0)
+            if url.rstrip("/") in visited:
+                continue
+            visited.add(url.rstrip("/"))
+            if rp is not None and not rp.can_fetch("A2A-Engine", url):
+                skipped_robots += 1
+                continue
+            r = fetch(url, record=not guess)
+            if r is None:
+                continue
+            final = str(r.url).rstrip("/")
+            if final in visited and final != url.rstrip("/"):      # 홈으로 되돌아온 리다이렉트
+                continue
+            visited.add(final)
+            pages.append({"url": url, "bytes": len(r.text)})
+            found.extend(_emails_in(r.text, url))
+            queue += [u for u in _links(r.text, final) if u not in queue and u.rstrip("/") not in visited]
+
+    try:
         crawl(base)
         # 흔한 실패: 인증서가 www에만 걸려 apex가 죽는 사이트(실측: mysc.co.kr) — www로 한 번 더
         host = urlsplit(base).hostname
@@ -266,7 +354,7 @@ def discover(domain: str, person: "dict | None" = None, *,
                        if mx_lookup else {"status": "unchecked", "detail": "조회 생략"})
 
     return {"domain": root, "base": base, "pages": pages, "errors": errors,
-            "retried_www": retried_www,
+            "retried_www": retried_www, "skipped_robots": skipped_robots,
             "emails": results, "patterns": patterns,
             "smtp_check": smtp_check,
             "note": "found=페이지에서 실제로 본 주소(출처 포함) · pattern=이름+패턴 추측 — 섞지 말 것"}

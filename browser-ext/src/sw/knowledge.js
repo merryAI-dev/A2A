@@ -49,7 +49,7 @@ export async function attach(d) {
   harness = createHarness({
     dir: `${USER_DATA}/harness`, onto, apiKey, Agent: d.Agent, more: () => worktypes.extraNodes(),
     typeOf: (taskId) => worktypes?.typeOf(taskId) || null, typeName: (id) => worktypes?.get(id)?.name || '', currentType: () => d.currentType(),
-    toolNames: d.toolNames, ema: () => null, chatChannels: d.chatChannels,
+    toolNames: d.toolNames, toolDocs: d.toolDocs, ema: () => null, chatChannels: d.chatChannels,
     onChange: changed,
   });
   recaller = createRecall({ onto, signals: () => harness.signals(), sameType: (id) => worktypes.tasksOf(id) });

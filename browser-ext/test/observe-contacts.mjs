@@ -108,7 +108,9 @@ async function runTask(c, text) {
     if (cur !== 'working') break;
   }
   return swEval(c, `(() => { const t = globalThis.a2a.tasks()[0];
-    return { title: t.title, status: t.status, steps: t.steps.map((s) => s.name), summary: (t.summary || '').slice(0, 400) }; })()`);
+    const a = t._text || t.summary || '';
+    return { title: t.title, status: t.status, steps: t.steps.map((s) => s.name), summary: a.slice(0, 500),
+             emails: [...new Set(a.match(/[\\w.+-]+@[\\w.-]+\\.[a-z]{2,}/gi) || [])] }; })()`);
 }
 
 const K = `(async () => { for (let i = 0; i < 50 && !globalThis.a2a?.knowledge?.().harness; i++) await new Promise((r) => setTimeout(r, 100)); return true; })()`;
@@ -130,38 +132,46 @@ const main = async () => {
                    `window.a2a.invoke('key:set', ${JSON.stringify(key)})`);
     await sleep(500);
 
+    report.tools = await swEval(c, `globalThis.a2a.makeAgent().toolList().map((t) => t.name)`);
+    if (!report.tools.includes('find_contacts')) throw new Error(`find_contacts가 실리지 않음(내장 확장이 옛 빌드?): ${report.tools}`);
     const TASKS = [
       'find_contacts 도구로 mysc.co.kr 담당자 연락 메일을 찾아 정리해줘',
       'find_contacts 도구로 acme-nonexistent-zz9.kr 연락 메일을 찾아줘. 없으면 없다고 말해줘',
       'find_contacts 도구로 anthropic.com에서 제휴 문의에 쓸 메일을 찾아줘',
+      // 교훈을 만든 신호와 무관한 도메인 — 그 사례에만 맞춘 개선인지 가른다
+      'find_contacts 도구로 crevisse.com 협업 제안을 보낼 메일을 찾아줘',
+      'find_contacts 도구로 impactsquare.com 영업 제안을 보낼 메일을 찾아줘',
     ];
     for (const t of TASKS) {
       report.tasks.push(await runTask(c, t));
       await sleep(1500);                                   // 수집 settle
     }
     report.map = await swEval(c, `globalThis.a2a.knowledge().onto.summary()`);
+    report.contacts = await swEval(c, `globalThis.a2a.knowledge().onto.list('contact').map((n) => n.label)`);
     report.signals = await swEval(c, `globalThis.a2a.knowledge().harness.signals()
       .map((s) => ({ id: s.id, type: s.type, title: s.title, locked: !!s.locked }))`);
 
-    const target = report.signals.find((s) => !s.locked);
-    if (target) {
+    // 채택은 사람 몫이다 — 여기서는 사람이 납득할 최소 조건(이김·신호 해결·회귀 없음)을 넘은 것만 자동 채택한다.
+    const attempts = [];
+    let adopted = null, chosen = null;
+    for (const target of report.signals.filter((x) => !x.locked).slice(0, 3)) {
       const lesson = await swEval(c, `globalThis.a2a.knowledge().harness.propose(${JSON.stringify(target.id)})`);
       const probe = await swEval(c, `globalThis.a2a.knowledge().harness.probe(${JSON.stringify(lesson.id)})`)
         .catch((e) => ({ error: String(e.message || e) }));
-      let adopted = null, rerun = null;
-      if (probe && !probe.error && probe.verdict?.winner === 'B') {
+      const v = probe?.verdict;
+      const pass = !!v && v.winner === 'B' && v.fixed_signal === true && !(v.regressions || []).length;
+      attempts.push({ signal: target, lesson: { id: lesson.id, text: lesson.text, edit: lesson.edit }, pass,
+                      probe: probe?.error ? probe : { verdict: v, baselineTools: probe?.baseline?.tools, candidateTools: probe?.candidate?.tools } });
+      if (pass) {
         adopted = await swEval(c, `globalThis.a2a.knowledge().harness.adopt(${JSON.stringify(lesson.id)}, 'observer')`);
-        rerun = await runTask(c, TASKS[1]);
+        chosen = lesson.id;
+        break;
       }
-      report.loop = {
-        signal: target, lesson: { id: lesson.id, text: lesson.text },
-        probe: probe?.error ? probe : { verdict: probe?.verdict, baselineTools: probe?.baseline?.tools, candidateTools: probe?.candidate?.tools },
-        adopted: adopted && { version: adopted.version ?? adopted }, rerun,
-        liveVersion: await swEval(c, `globalThis.a2a.knowledge().harness.live.version()`),
-      };
-    } else {
-      report.loop = { note: '제안할 신호 없음 — 실패·거절·찾지 못함이 기록되지 않았다' };
     }
+    const rerun = [];
+    if (adopted) for (const t of TASKS) { rerun.push(await runTask(c, t)); await sleep(1500); }
+    report.loop = { attempts, adoptedLesson: chosen, adopted, rerun,
+                    liveVersion: await swEval(c, `globalThis.a2a.knowledge().harness.live.version()`) };
     console.log(JSON.stringify(report, null, 1));
   } finally {
     proc.kill();

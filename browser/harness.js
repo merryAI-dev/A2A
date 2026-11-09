@@ -95,7 +95,7 @@ function renderPrompt(edit) {
 }
 
 // typeOf(taskId): 작업의 업무 유형(worktypes.js), currentType(): 지금 실행 중인 작업의 유형 — 유형 범위로 채택한 교훈은 그 유형에만 들어간다
-function createHarness({ dir, onto, apiKey, toolNames, Agent, ema = () => null, chatChannels = async () => [], onChange = () => {}, more = () => [],
+function createHarness({ dir, onto, apiKey, toolNames, toolDocs = () => '', Agent, ema = () => null, chatChannels = async () => [], onChange = () => {}, more = () => [],
   typeOf = () => null, typeName = () => '', currentType = () => null }) {
   fs.mkdirSync(dir, { recursive: true });
   const F = { versions: path.join(dir, 'versions.json'), lessons: path.join(dir, 'lessons.jsonl'), probes: path.join(dir, 'probes.jsonl') };
@@ -140,6 +140,13 @@ function createHarness({ dir, onto, apiKey, toolNames, Agent, ema = () => null, 
     const out = [];
     const add = (type, key, title, links, detail = {}, idKey = `${type}|${key}`) => out.push({ id: `sig:${sha(idKey).slice(0, 12)}`, type, title, links, ...detail });
     const taskOf = (id) => { for (const i of inIdx.get(id) || []) { const e = edges[i]; if (nodes.get(e.s)?.type === 'task') return e.s; } return null; };
+    // 이 작업이 엔진 도구(find_contacts)로 받은 결과 원문들
+    const engineReads = (task) => {
+      const out = [];
+      const walk = (id) => { for (const i of outIdx.get(id) || []) { const e = edges[i]; const o = nodes.get(e.o); if (e.r === 'has_step') walk(e.o); else if (e.r === 'read' && o?.props.platform === 'a2a-engine') out.push(onto.blobText(o.props.hash, 20000)); } };
+      walk(task);
+      return out;
+    };
     for (const n of nodes.values()) {
       if (n.type === 'approval' && n.props.status === 'rejected' && !n.props.simulated) {
         add('거절', n.id, `거절된 동작: ${n.label.slice(2)}`, [n.id, taskOf(n.id)].filter(Boolean));
@@ -163,6 +170,9 @@ function createHarness({ dir, onto, apiKey, toolNames, Agent, ema = () => null, 
       const text = onto.blobText(n.props.hash, 3000);
       if (!NOT_FOUND.test(text)) continue;
       const task = taskOf(n.id);
+      const engine = task ? engineReads(task) : [];
+      if (engine.some((t) => /읽은 페이지 0장/.test(t))) continue;                 // 조회가 '안 열림'을 확인했다 — 정직한 답이지 실패가 아니다
+      const partial = engine.some((t) => /^- \S+@\S+ \[found/m.test(t));           // 주소는 찾았고 원하는 종류가 없었다
       const instr = task ? String(nodes.get(task)?.props.instruction || '') : '';
       const terms = [...new Set([...`${instr} ${text}`.matchAll(/["“'‘]([^"”'’]{2,20})["”'’]|([가-힣A-Za-z0-9]{3,12})(?=\s*(?:대표|회사|기업|님|사|에게|의|을|를|은|는|이|가))/g)]
         .map((m) => (m[1] || m[2]).trim()).filter((w) => w.length >= 2 && !/^(이|그|저|우리|회사|기업|대표)/.test(w)))].slice(0, 8);
@@ -180,6 +190,7 @@ function createHarness({ dir, onto, apiKey, toolNames, Agent, ema = () => null, 
       // 같은 답에서 나온 신호는 근거가 나중에 생겨도(찾지 못함 → 근거 없는 없다) id를 그대로 — 교훈·재실행이 따라온다
       const idKey = `찾지 못함|${n.id}`;
       if (hit) add('근거 없는 없다', `${n.id}|${hit.node}`, `"${hit.term}" 없다고 했지만 ${nodes.get(hit.node).type === 'company' ? `EMA 등록 기업(${nodes.get(hit.node).props.frn})` : 'EMA 기록'}에 있음`, [n.id, task, hit.node].filter(Boolean), { term: hit.term }, idKey);
+      else if (partial) add('일부만 찾음', n.id, `일부만 찾음: ${n.label}`, [n.id, task].filter(Boolean), {}, idKey);
       else add('찾지 못함', n.id, `찾지 못했다고 답함: ${n.label}`, [n.id, task].filter(Boolean), {}, idKey);
     }
     // 다시 시킴 — 같은 작업에 이어진 지시가 정정·불만으로 시작
@@ -228,6 +239,9 @@ function createHarness({ dir, onto, apiKey, toolNames, Agent, ema = () => null, 
 - 승인 게이트·비밀번호·데이터 경계 같은 안전 규칙은 잠겨 있습니다. 그걸 약하게 하는 수정은 쓰지 마세요.
 - 특정 회사 이름 같은 일회성 사실을 하네스에 박지 마세요. "어떤 종류의 일에는 어떤 도구를 먼저" 같은 행동 규칙으로.
 - 도구 이름은 다음 중에서만: ${toolNames().join(', ')} (EMA 도구는 ema__로 시작).
+- 도구의 동작은 아래 설명에 있는 것만 사실입니다. 설명에 없는 제약(예: 어떤 탭에서만 된다)을 지어내지 마세요.
+${toolDocs()}
+- 호출을 늘리는 교훈은 결과가 달라질 때만 쓰세요. 같은 답을 더 많은 단계로 얻는 것은 개선이 아닙니다.
 ${DATA_NOTE}
 JSON 하나로만 답하세요: {"lesson": "한두 문장 교훈", "applies_when": "언제 쓰는지", "edit": {"system": "덧붙일 글(선택)", "tools": {"도구이름": "안내(선택)"}, "skills": [{"name": "...", "when": "...", "steps": ["..."]}]}}`;
     const user = `<evidence>\n신호: ${sig.type} — ${sig.title}\n지시: ${ev.instruction}\n단계:\n${ev.steps.join('\n') || '(없음)'}\n에이전트 답:\n${ev.answer || '(없음)'}\n관련 기록:\n${ev.others.join('\n\n') || '(없음)'}\n</evidence>\n\n지금 채택된 수정(있으면): ${JSON.stringify(activeEdit() || {})}`;
@@ -269,7 +283,8 @@ JSON 하나로만 답하세요: {"lesson": "한두 문장 교훈", "applies_when
     const reads = [];
     const walk = (id) => { for (const i of outIdx.get(id) || []) { const e = edges[i]; if (e.r === 'read') reads.push(nodes.get(e.o)); if (e.r === 'has_step') walk(e.o); } };
     walk(task);
-    const pages = reads.filter((s) => s && s.props.platform !== 'ema-station');
+    const pages = reads.filter((s) => s && s.props.platform !== 'ema-station' && s.props.platform !== 'a2a-engine');
+    const engineResult = reads.filter((s) => s && s.props.platform === 'a2a-engine').pop() || null;
     // EMA 기록 — 그 작업이 읽은 것 + 작업 전후 하루 안에 같은 사람이 받은 EMA 결과(다른 경로로 이미 알 수 있던 것)
     const t0 = Date.parse(nodes.get(task)?.first || '') || Date.now();
     const near = [...nodes.values()].filter((n) => n.type === 'source' && n.props.platform === 'ema-station' && Math.abs(Date.parse(n.first || 0) - t0) < 864e5);
@@ -304,6 +319,8 @@ JSON 하나로만 답하세요: {"lesson": "한두 문장 교훈", "applies_when
       chat: { channels: chatChannels, post: async (cid, text) => { log.push({ sim: 'post', cid, text: text.slice(0, 300) }); return { seq: 0 }; } },
       // 재현용 페이지 도구 — 기록된 원문만 보여 주고, 누르기·입력·이동은 하지 않는다
       replay: {
+        // 엔진 도구(find_contacts)는 그때 기록된 결과를 그대로 — 안 주면 기준선이 불리해 비교가 틀어진다(실측)
+        engineResult: () => (engineResult ? onto.blobText(engineResult.props.hash, 20000) : null),
         snapshot: () => ({ url: page?.props.url || 'about:blank', title: page?.label || '빈 탭', elements: ['(재현 모드: 요소 번호 없음 — 누르기·입력은 실행되지 않습니다)'],
           text: page ? onto.blobText(page.props.hash, 12000) : '(빈 탭)', truncated: false }),
         navigate: (u) => { page = pages.find((p) => p.props.url === u) || null; log.push({ sim: 'navigate', url: u }); return page ? '이동함(재현)' : '재현: 이 주소의 기록이 없음 — 이동했다고 가정'; },

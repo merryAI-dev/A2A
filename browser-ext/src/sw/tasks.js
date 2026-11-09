@@ -2,8 +2,9 @@
 // 작업 = 사용자가 맡긴 일 하나. 같은 대화에서 이어 말하면 같은 작업에 붙고, "새 작업"이면 새로 연다.
 // 에이전트는 작업을 시작한 탭(chrome.tabs id)에서 일한다.
 import { on, broadcast, sendTo, uiCount } from './hub.js';
-import { store, runtime, loadStore, saveStore, pushState } from './state.js';
-import { Agent, fence, validPage, TOOL_NAMES } from './agent.js';
+import { store, runtime, loadStore, saveStore, pushState, profile } from './state.js';
+import { CFG } from './config.js';
+import { Agent, fence, validPage, TOOL_NAMES, TOOL_DOCS } from './agent.js';
 import * as tools from './pagetools.js';
 import { agentChat } from './chat.js';
 import { pageMarkdown } from '../ui/format.js';
@@ -18,7 +19,7 @@ let currentTask = null;
 let K = null;
 let runModel = null;
 let runTypeId = null;
-attach({ Agent, toolNames: () => TOOL_NAMES, chatChannels: () => agentChat.channels(), currentType: () => runTypeId })
+attach({ Agent, toolNames: () => TOOL_NAMES, toolDocs: () => TOOL_DOCS, chatChannels: () => agentChat.channels(), currentType: () => runTypeId })
   .then((k) => { K = k; })
   .catch((e) => console.warn('[knowledge]', e));
 // 웹 탭 수집 — 에이전트가 그 탭에서 일하는 중이면 agent, 아니면 human(Electron main.js watchTab과 같다)

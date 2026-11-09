@@ -22,6 +22,10 @@ SITE = {
       채용 문의는 recruit@acme-robots.kr
       그림 속 주소 logo@2x.png
       대행사: agency@mail-vendor.co.kr</body></html>""",
+    "/sitemap.xml": "<urlset><url><loc>__BASE__/people/partnership</loc></url></urlset>",
+    "/people/partnership": "<html>제휴 담당 partner.kim@acme-robots.kr</html>",
+    "/robots.txt": "User-agent: *\nDisallow: /contact-us\n",
+    "/contact-us": "<html>금지 구역 secret@acme-robots.kr</html>",
     "/about": """<html><body>
       홍보 담당 김민준 — minjun [at] acme-robots [dot] kr
       예시 주소 user@example.com 는 안내용입니다</body></html>""",
@@ -33,6 +37,8 @@ def site():
     class H(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
             body = SITE.get(self.path.split("?")[0])
+            if body:
+                body = body.replace("__BASE__", f"http://127.0.0.1:{self.server.server_port}")
             self.send_response(200 if body else 404)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.end_headers()
@@ -87,7 +93,7 @@ def test_generic_flag_and_ordering(site, no_dns):
 
 def test_pattern_inference_and_person_candidates(site, no_dns):
     out = finder.discover(site, person={"first": "Hana", "last": "Park"}, client=httpx.Client(), assume_root="acme-robots.kr")
-    assert {"pattern": "{first}.{last}", "seen": 1} in out["patterns"]
+    assert {"pattern": "{first}.{last}", "seen": 2} in out["patterns"]
     cands = [e for e in out["emails"] if e["method"] == "pattern"]
     assert cands and cands[0]["address"] == "hana.park@acme-robots.kr"
     assert all(not c["sources"] for c in cands)     # 추측에 출처를 달지 않는다
@@ -119,3 +125,36 @@ def test_bad_domain_rejected():
     with pytest.raises(Exception) as e:
         finder.discover("한글만")
     assert getattr(e.value, "code", "") == "invalid_input"
+
+
+def test_root_domain_keeps_public_suffix():
+    assert finder._root_domain("www.mysc.co.kr") == "mysc.co.kr"
+    assert finder._root_domain("corp.example.com.vn") == "example.com.vn"
+    assert finder._root_domain("www.anthropic.com") == "anthropic.com"
+
+
+def test_links_follow_www_and_apex_of_same_company():
+    html = '<a href="https://www.corp.co.kr/contact">문의</a><a href="https://other.co.kr/contact">문의</a>'
+    assert finder._links(html, "https://corp.co.kr") == ["https://www.corp.co.kr/contact"]
+
+
+def test_sitemap_page_found_and_robots_respected(site, no_dns):
+    out = finder.discover(site, client=httpx.Client(), assume_root="acme-robots.kr")
+    e = _addrs(out)
+    assert "partner.kim@acme-robots.kr" in e       # 메뉴에 없고 sitemap에만 있는 페이지
+    assert "secret@acme-robots.kr" not in e and out["skipped_robots"] >= 1
+
+
+def test_guessed_404s_are_not_errors(site, no_dns):
+    out = finder.discover(site, client=httpx.Client(), assume_root="acme-robots.kr")
+    assert out["errors"] == []                     # /team 같은 찍어 본 경로의 404는 실패가 아니다
+
+
+def test_paths_embedded_in_page_data():
+    html = 'x={"link":"/company/contact-sales","other":"/assets/app"}'
+    assert finder._links(html, "https://www.corp.com") == ["https://www.corp.com/company/contact-sales"]
+
+
+def test_placeholder_addresses_dropped():
+    out = finder._emails_in("문의 user@domain.com 또는 you@yourdomain.co.kr, 실제 real@corp.kr", "u")
+    assert [e["address"] for e in out] == ["real@corp.kr"]
