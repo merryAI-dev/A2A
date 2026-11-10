@@ -727,6 +727,32 @@ test('n18-merry-writes-in-parts-real', async ({ cdp, EXT, Page, sleep }) => {
   return { ok: !!sec && sec.status !== 'draft' && sec.html.length > 200 && parts >= 2 && m.drafts > parts && !err.length,
     status: sec?.status, chars: sec?.html?.length, parts, drafts: m.drafts, asks: m.asks, err, steps: m.steps.slice(0, 12) };
 });
+// 실제 사이트 — 접점 찾기가 끝까지 기다리게 하지 않고, 읽는 대로 진행과 주소를 화면에 올리는지
+test('n19-contacts-fill-in-as-found-real', async ({ cdp, EXT, Page }) => {
+  const p = await Page.open(cdp, `${EXT}/contacts.html`);
+  await p.waitFor("!!document.querySelector('#contact-domain') && !!window.a2a");
+  await p.eval(`(() => {
+    window.__c = { live: 0, liveRows: 0, events: [] };
+    window.a2a.on('contacts:progress', (ev) => window.__c.events.push(ev.type));
+    new MutationObserver(() => {
+      const live = document.querySelector('#contact-live');
+      if (live) { window.__c.live++; window.__c.liveRows = Math.max(window.__c.liveRows, live.querySelectorAll('.contact-row').length); }
+    }).observe(document.body, { childList: true, subtree: true, characterData: true });
+    const input = document.querySelector('#contact-domain');
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, 'mysc.co.kr');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  })()`);
+  await p.waitFor("!document.querySelector('#contact-find').disabled");
+  await p.eval("document.querySelector('#contact-find').click()");
+  const done = await p.waitFor("!!document.querySelector('#contact-result')", 90000).catch(() => null);
+  const c = await p.eval('window.__c');
+  const rows = await p.eval("document.querySelectorAll('#contact-result .contact-row').length");
+  const checking = await p.eval("document.querySelector('#contact-result').innerText.includes('확인하는 중')");
+  await p.shot('n19-contacts.png', { width: 1200, height: 800 });
+  await p.close();
+  return { ok: !!done && c.live > 1 && c.liveRows >= 1 && c.events.includes('page') && c.events.includes('email') && rows >= 1 && !checking,
+    liveUpdates: c.live, liveRows: c.liveRows, rows, events: c.events.length };
+});
 test('n14-every-app-page-has-home-and-map', async ({ cdp, EXT, Page }) => {
   const seen = {};
   for (const page of ['merry', 'contacts', 'learn', 'map']) {

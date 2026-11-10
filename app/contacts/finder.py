@@ -85,20 +85,35 @@ def _quote(text: str, pos: int, needle: str, width: int = 60) -> str:
     return " ".join(text[s:pos + len(needle) + width].split())
 
 
+_TAGS = re.compile(r"<[^>]*>|^[^<>]*>|<[^<>]*$")
+
+
 def _emails_in(html: str, page_url: str) -> list[dict]:
+    # 인용은 사람이 페이지에서 보는 글로 — 원문 HTML을 그대로 자르면 태그·스타일 조각이 출처로 나온다
+    text = BeautifulSoup(html, "html.parser").get_text(" ", strip=True)
+    low = text.lower()
+
+    def quote(pos: int, needle: str) -> str:
+        at = low.find(needle.lower())
+        if at >= 0:
+            return _quote(text, at, needle)
+        # 글에는 없고 속성(mailto 등)에만 있는 주소 — 주변 원문에서 태그를 걷어 낸다
+        near = " ".join(_TAGS.sub(" ", _quote(html, pos, needle)).split())
+        return near if needle.lower() in near.lower() else f"{needle} (링크 주소) {near}".strip()
+
     out = []
     for m in EMAIL.finditer(html):
         addr = m.group(0).strip(".")
         if NOISE_DOMAIN.search(addr) or IMAGEY.search(addr):
             continue
-        out.append({"address": addr.lower(), "url": page_url, "quote": _quote(html, m.start(), addr)})
+        out.append({"address": addr.lower(), "url": page_url, "quote": quote(m.start(), addr)})
     for m in OBFUSCATED.finditer(html):
         local, dom, tld = m.group(1), m.group(2), m.group(3)
         addr = f"{local}@{dom}" + (f".{tld}" if tld and not dom.endswith(f".{tld}") else "")
         if "." not in addr.split("@")[1]:
             continue
         out.append({"address": addr.lower(), "url": page_url,
-                    "quote": _quote(html, m.start(), m.group(0)), "obfuscated": True})
+                    "quote": quote(m.start(), m.group(0)), "obfuscated": True})
     return out
 
 
@@ -236,13 +251,28 @@ def verify(address: str, *, mx_cache: dict, smtp_check: bool, helo_domain: str =
             "detail": "RCPT 수락" if ok else "RCPT 거절"}
 
 
+def _entry(hit: dict, root: str, sources: bool = True) -> dict:
+    """페이지에서 본 주소 하나의 결과 모양 — 진행 알림과 최종 결과가 같은 모양을 쓴다."""
+    local, dom = hit["address"].split("@", 1)
+    return {"address": hit["address"], "method": "found",
+            "same_domain": _root_domain(dom) == root,
+            "generic": bool(GENERIC_LOCAL.match(local)),
+            "sources": [{"url": hit["url"], "quote": hit["quote"][:200]}] if sources else []}
+
+
 # ── 본체 ─────────────────────────────────────────────────────────────
 def discover(domain: str, person: "dict | None" = None, *,
              client: "httpx.Client | None" = None,
              smtp_check: "bool | None" = None,
              mx_lookup: bool = True,
-             assume_root: "str | None" = None) -> dict:
-    """assume_root: 시험용 — 가짜 서버(127.0.0.1)로 긁되 회사 도메인 판정은 이 값으로."""
+             assume_root: "str | None" = None,
+             on_event=None) -> dict:
+    """assume_root: 시험용 — 가짜 서버(127.0.0.1)로 긁되 회사 도메인 판정은 이 값으로.
+
+    on_event(dict): 진행을 한 걸음씩 알린다 — 읽은 페이지(page), 새로 본 주소(email),
+    단계(step). 화면이 끝까지 기다리지 않고 찾는 대로 보여 주게 하려는 것. 결과는 그대로 반환한다.
+    """
+    emit = on_event or (lambda ev: None)
     base = _norm_base(domain)
     root = assume_root or _root_domain(urlsplit(base).hostname)
     own = client is None
@@ -252,6 +282,18 @@ def discover(domain: str, person: "dict | None" = None, *,
         smtp_check = os.environ.get("CONTACTS_SMTP_CHECK") == "1"
 
     pages, found, errors = [], [], []
+    announced: set[str] = set()
+
+    def took(url, html):
+        """페이지 하나를 읽었다 — 기록하고, 처음 보는 주소는 바로 알린다."""
+        pages.append({"url": url, "bytes": len(html)})
+        hits = _emails_in(html, url)
+        found.extend(hits)
+        emit({"type": "page", "url": url, "pages": len(pages)})
+        for h in hits:
+            if h["address"] not in announced:
+                announced.add(h["address"])
+                emit({"type": "email", "email": _entry(h, root)})
     retried_www = False
     skipped_robots = 0
     t_end = time.monotonic() + DEADLINE
@@ -276,8 +318,7 @@ def discover(domain: str, person: "dict | None" = None, *,
             return
         rp, maps = _robots(fetch, start)
         visited = {start, str(home.url).rstrip("/")}
-        pages.append({"url": start, "bytes": len(home.text)})
-        found.extend(_emails_in(home.text, start))
+        took(start, home.text)
         queue = _links(home.text, str(home.url).rstrip("/"))
         queue += [u for u in _sitemap_urls(fetch, start, maps) if u not in queue]
         guesses = [f"{start}{p}" for p in GUESS_PATHS]
@@ -297,8 +338,7 @@ def discover(domain: str, person: "dict | None" = None, *,
             if final in visited and final != url.rstrip("/"):      # 홈으로 되돌아온 리다이렉트
                 continue
             visited.add(final)
-            pages.append({"url": url, "bytes": len(r.text)})
-            found.extend(_emails_in(r.text, url))
+            took(url, r.text)
             queue += [u for u in _links(r.text, final) if u not in queue and u.rstrip("/") not in visited]
 
     try:
@@ -316,11 +356,7 @@ def discover(domain: str, person: "dict | None" = None, *,
     # 주소별로 출처를 모은다 — 같은 도메인 주소를 앞세우고, 밖의 주소(그룹웨어·대행사)는 뒤로
     by_addr: dict[str, dict] = {}
     for f in found:
-        e = by_addr.setdefault(f["address"], {
-            "address": f["address"], "method": "found",
-            "same_domain": _root_domain(f["address"].split("@", 1)[1]) == root,
-            "generic": bool(GENERIC_LOCAL.match(f["address"].split("@", 1)[0])),
-            "sources": []})
+        e = by_addr.setdefault(f["address"], _entry(f, root, sources=False))
         if len(e["sources"]) < 3:
             e["sources"].append({"url": f["url"], "quote": f["quote"][:200]})
 
@@ -348,6 +384,8 @@ def discover(domain: str, person: "dict | None" = None, *,
                                 "same_domain": True, "generic": False, "sources": []})
                 known.add(addr)
 
+    if results:
+        emit({"type": "step", "text": f"주소 {len(results)}개의 메일 서버를 확인하는 중…"})
     mx_cache: dict = {}
     for e in results:
         e["verify"] = (verify(e["address"], mx_cache=mx_cache, smtp_check=smtp_check)

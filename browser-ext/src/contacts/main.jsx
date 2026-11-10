@@ -1,7 +1,8 @@
-// 접점 찾기 — 회사 도메인으로 공개 페이지의 메일을 찾는 전용 화면. 일은 엔진(/v1/contacts/discover)이 한다.
+// 접점 찾기 — 회사 도메인으로 공개 페이지의 메일을 찾는 전용 화면. 일은 엔진(/v1/contacts/discover/stream)이 한다.
+// 엔진이 찾는 대로 흘려보내는 진행(읽은 페이지·새로 본 주소)을 바로 보여 주고, 끝나면 검증 결과로 바꾼다.
 import '../shared/bridge.js';
 import { createRoot } from 'react-dom/client';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import '../map/map.css';
 import Icon from '../ui/Icon.jsx';
 import { AppFrame } from '../ui/AppNav.jsx';
@@ -10,6 +11,7 @@ const VERIFY = {
   smtp_ok: ['수신 확인', 'text-info'], smtp_rejected: ['없는 주소', 'text-accent'],
   smtp_catch_all: ['모든 주소를 받는 곳 · 개별 확인 불가', 'text-card-sub'], mx_ok: ['메일 서버 있음', 'text-card-sub'],
   no_mx: ['메일 서버 없음', 'text-accent'], unknown: ['확인 못 함', 'text-card-faint'], unchecked: ['확인 안 함', 'text-card-faint'],
+  checking: ['확인하는 중…', 'text-card-faint'],
 };
 const Field = (p) => <input {...p} className={`h-9 rounded-lg bg-field px-3 text-[13px] ring-1 ring-field-line outline-none focus:ring-card-faint ${p.className || ''}`} />;
 const Tag = ({ children }) => <span className="rounded bg-raise px-1.5 py-0.5 text-[11px] text-card-sub">{children}</span>;
@@ -46,17 +48,31 @@ function Contacts() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [out, setOut] = useState(null);
+  const [live, setLive] = useState(null);          // 찾는 중 — { pages, at, step, emails }
+  const run = useRef('');
+  useEffect(() => window.a2a.on('contacts:progress', (ev) => {
+    if (ev.run !== run.current) return;
+    setLive((l) => {
+      if (!l) return l;
+      if (ev.type === 'page') return { ...l, pages: ev.pages, at: ev.url, step: '' };
+      if (ev.type === 'email') return { ...l, emails: [...l.emails, { ...ev.email, verify: { status: 'checking' } }] };
+      if (ev.type === 'step') return { ...l, step: ev.text };
+      return l;
+    });
+  }), []);
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
   const find = async (e) => {
     e.preventDefault();
     if (!f.domain.trim() || busy) return;
-    setBusy(true); setErr(''); setOut(null);
-    try { setOut(await window.a2a.invoke('contacts:find', f)); }
-    catch (x) { setErr(String(x.message || x)); }
+    run.current = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    setBusy(true); setErr(''); setOut(null); setLive({ pages: 0, at: '', step: '', emails: [] });
+    try { setOut(await window.a2a.invoke('contacts:find', { ...f, run: run.current })); setLive(null); }
+    catch (x) { setErr(String(x.message || x)); }      // 멈춰도 그때까지 본 주소는 화면에 남긴다
     finally { setBusy(false); }
   };
-  const found = out?.emails.filter((x) => x.method !== 'pattern') || [];
-  const guessed = out?.emails.filter((x) => x.method === 'pattern') || [];
+  const shown = out?.emails || live?.emails || [];
+  const found = shown.filter((x) => x.method !== 'pattern');
+  const guessed = shown.filter((x) => x.method === 'pattern');
   return (
     <div id="contacts" className="absolute inset-0 overflow-y-auto">
       <div className="mx-auto max-w-[760px] px-6 pt-10 pb-16">
@@ -68,10 +84,19 @@ function Contacts() {
           <Field placeholder="담당자 이름 (선택 · 영문, 예: Hana)" value={f.person_first} onChange={set('person_first')} />
           <Field placeholder="담당자 성 (선택 · 영문, 예: Park)" value={f.person_last} onChange={set('person_last')} />
           <button id="contact-find" disabled={!f.domain.trim() || busy} className="col-span-2 mt-1 h-9 rounded-lg bg-card-ink text-[13px] font-semibold text-card disabled:opacity-40">
-            {busy ? '공개 페이지를 읽는 중… (최대 1분쯤 걸려요)' : '메일 찾기'}
+            {busy ? '찾는 중…' : '메일 찾기'}
           </button>
         </form>
         {err && <div className="mt-4 text-[13px] text-accent">{err}</div>}
+        {!out && live && (
+          <section id="contact-live" className="mt-8">
+            <div className="text-[13px] text-card-sub">
+              {busy ? (live.step || `페이지 ${live.pages}장을 읽었어요${live.at ? ` · ${live.at.replace(/^https?:\/\//, '')}` : ' · 첫 페이지를 여는 중…'}`) : `페이지 ${live.pages}장까지 읽고 멈췄어요 — 아래는 그때까지 본 주소예요(검증 전).`}
+              {' '}· 주소 {live.emails.length}개
+            </div>
+            {found.length > 0 && <ul className="mt-3">{found.map((e) => <Email key={e.address} e={e} />)}</ul>}
+          </section>
+        )}
         {out && (
           <section id="contact-result" className="mt-8">
             <div className="text-[13px] text-card-sub">{out.domain} · 페이지 {out.pages.length}장을 읽었어요{out.errors?.length ? ` · ${out.errors.length}장 실패` : ''}{out.patterns?.length ? ` · 메일 형식 ${out.patterns.map((p) => p.pattern).join(', ')}` : ''}</div>

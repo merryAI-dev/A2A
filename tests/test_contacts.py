@@ -158,3 +158,30 @@ def test_paths_embedded_in_page_data():
 def test_placeholder_addresses_dropped():
     out = finder._emails_in("문의 user@domain.com 또는 you@yourdomain.co.kr, 실제 real@corp.kr", "u")
     assert [e["address"] for e in out] == ["real@corp.kr"]
+
+
+def test_progress_events_arrive_as_it_goes(site, no_dns):
+    """찾는 대로 알린다 — 페이지마다 page, 처음 본 주소마다 email(출처 포함), 결과와 같은 모양으로."""
+    events = []
+    out = finder.discover(site, client=httpx.Client(), assume_root="acme-robots.kr",
+                          on_event=events.append)
+    pages = [e for e in events if e["type"] == "page"]
+    emails = [e["email"] for e in events if e["type"] == "email"]
+    assert [p["pages"] for p in pages] == list(range(1, len(out["pages"]) + 1))
+    assert {e["address"] for e in emails} == {e["address"] for e in out["emails"]}
+    assert len(emails) == len({e["address"] for e in emails})          # 같은 주소를 두 번 알리지 않는다
+    assert all(e["sources"] and e["sources"][0]["url"] for e in emails)  # 출처 없는 알림은 없다
+    by = {e["address"]: e for e in out["emails"]}
+    assert all(e["same_domain"] == by[e["address"]]["same_domain"]
+               and e["generic"] == by[e["address"]]["generic"] for e in emails)
+    # 첫 주소는 마지막 페이지를 읽기 전에 이미 알려졌다
+    assert events.index(next(e for e in events if e["type"] == "email")) < events.index(pages[-1])
+
+
+def test_quote_is_readable_text_not_markup():
+    html = ('<div style="width:0%;height:100%"/></div><div class="css-15y00n0">문의 info@acme-robots.kr</div>'
+            '<a role="button" class="css-1mmq7wp" href="mailto:hidden@acme-robots.kr">메일 보내기</a>')
+    hits = {h["address"]: h["quote"] for h in finder._emails_in(html, "https://acme-robots.kr")}
+    assert hits["info@acme-robots.kr"] == "문의 info@acme-robots.kr 메일 보내기"
+    assert "hidden@acme-robots.kr" in hits["hidden@acme-robots.kr"]
+    assert not any("<" in q or "class=" in q or "height" in q for q in hits.values())

@@ -395,13 +395,14 @@ function chooseRunModel(typeId) {
   return runModel;
 }
 // 접점 발굴 — 에이전트 도구와 접점 찾기 화면이 같은 경로를 쓴다. 결과 원문은 근거(derived_from)로 남는다.
-async function discoverContacts(input) {
+// 엔진이 찾는 대로 한 줄씩 흘려보내고(page·email·step), 화면은 onEvent로 받아 바로 보여 준다.
+async function discoverContacts(input, onEvent = () => {}) {
     const p = profile();
     const body = { domain: String(input.domain || ''), company: String(input.company || '').slice(0, 200) };
     if (input.person_first || input.person_last) {
       body.person = { first: String(input.person_first || ''), last: String(input.person_last || '') };
     }
-    const r = await fetch(`${CFG.engine}/v1/contacts/discover`, {
+    const r = await fetch(`${CFG.engine}/v1/contacts/discover/stream`, {
       method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Dev-User': p.user },
       body: JSON.stringify(body),
     });
@@ -409,7 +410,26 @@ async function discoverContacts(input) {
       const e = await r.json().catch(() => ({}));
       throw new Error(e.error?.message || `엔진 응답 ${r.status}`);
     }
-    const d = await r.json();
+    let d = null;
+    const take = (line) => {
+      if (!line.trim()) return;
+      const ev = JSON.parse(line);
+      if (ev.type === 'done') d = ev.result;
+      else if (ev.type === 'error') throw new Error(ev.message || '엔진에서 찾다가 멈췄어요');
+      else onEvent(ev);
+    };
+    const reader = r.body.pipeThrough(new TextDecoderStream()).getReader();
+    let buf = '';
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += value;
+      const lines = buf.split('\n');
+      buf = lines.pop();
+      for (const line of lines) take(line);
+    }
+    take(buf);
+    if (!d) throw new Error('엔진과의 연결이 중간에 끊겼어요 — 다시 시도해 주세요');
     const lines = [`도메인: ${d.domain} · 읽은 페이지 ${d.pages.length}장${d.errors?.length ? ` · 실패 ${d.errors.length}` : ''}`];
     for (const e of d.emails.slice(0, 20)) {
       const src = e.sources?.[0] ? ` — 출처 ${e.sources[0].url} "${e.sources[0].quote.slice(0, 80)}"` : '';
@@ -422,7 +442,12 @@ async function discoverContacts(input) {
                               sourceUrl: d.base || `https://${body.domain}` });
     return { d, text };
 }
-handle('contacts:find', async (input) => { await loadStore(); return (await discoverContacts(input || {})).d; });
+// 화면이 준 run 번호를 진행 알림에 그대로 붙인다 — 여러 탭에서 찾아도 제 것만 받게
+handle('contacts:find', async (input) => {
+  await loadStore();
+  const run = String(input?.run || '');
+  return (await discoverContacts(input || {}, (ev) => broadcast('contacts:progress', { run, ...ev }))).d;
+});
 // 업무 유형 — Opus가 고르고, 애매하면 사용자에게 객관식으로(고른 답은 분류 라벨로 남는다). 실패하면 유형 없이 진행
 async function pickWorkType(task, text) {
   if (store.prefs.worktype === false || !K?.worktypes || !llmKey()) return null;
