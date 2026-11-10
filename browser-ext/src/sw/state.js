@@ -2,7 +2,7 @@
 // 오래 남길 것(작업·설정·프로필·배경)은 chrome.storage.local, 탭은 chrome.tabs에서 그때그때 읽는다.
 import { broadcast } from './hub.js';
 import { downloadsList } from './browserdata.js';
-import { CFG } from './config.js';
+import { CFG, ENGINE_LLM_KEY } from './config.js';
 
 const NEWTAB = `chrome-extension://${chrome.runtime.id}/newtab.html`;
 const DEFAULTS = {
@@ -10,7 +10,7 @@ const DEFAULTS = {
   prefs: { notify: true, askProfile: false },
   profile: null,                  // { user, tenant }
   wallpaper: 'sky',
-  apiKey: '',                     // 개발용 — 운영에선 엔진 프록시
+  apiKey: '',                     // 직접 넣은 키 — 없으면 엔진 .env의 키를 프록시로 쓴다
 };
 export const store = { ...DEFAULTS };
 export const runtime = { busy: false, currentTaskId: null, tenantName: null, pickProfile: false };
@@ -33,6 +33,20 @@ export function saveStore() {
   }, 200);
 }
 
+// 엔진이 .env 키로 대신 불러 줄 수 있는지 — 서비스 워커가 잠들고 엔진이 늦게 떠도 되게 짧게 캐시한다
+let engineCheckedAt = 0;
+export async function checkEngineLLM() {
+  if (runtime.engineLLMOff) { runtime.engineLLM = false; return false; }
+  if (Date.now() - engineCheckedAt < (runtime.engineLLM ? 60000 : 5000)) return runtime.engineLLM;
+  engineCheckedAt = Date.now();
+  try {
+    const r = await fetch(`${CFG.engine}/llm/status`, { method: 'POST', signal: AbortSignal.timeout(1000) });
+    runtime.engineLLM = r.ok && (await r.json()).available === true;
+  } catch { runtime.engineLLM = false; }
+  return runtime.engineLLM;
+}
+export const llmKey = () => store.apiKey || (runtime.engineLLM ? ENGINE_LLM_KEY : '');
+
 export const profile = () => ({ user: store.profile?.user || CFG.user, tenant: store.profile?.tenant || CFG.tenant });
 
 // 화면이 쓰는 탭 정보 — Electron tabInfo()와 같은 모양
@@ -52,6 +66,7 @@ export function pushState() {
   pushTimer = setTimeout(async () => {
     pushTimer = null;
     await loadStore();
+    await checkEngineLLM();
     const p = profile();
     broadcast('state', {
       tabs: await tabInfo(),
@@ -59,11 +74,12 @@ export function pushState() {
       currentTaskId: runtime.currentTaskId,
       busy: runtime.busy,
       user: p.user, tenant: p.tenant, tenantName: runtime.tenantName || p.tenant,
-      prefs: store.prefs, hasKey: !!store.apiKey, wallpaper: store.wallpaper,
+      prefs: store.prefs, hasKey: !!llmKey(), wallpaper: store.wallpaper,
       pickProfile: runtime.pickProfile,
       panelOpen: true,              // 사이드 패널은 열려 있을 때만 화면이 있다
       bookmarks: [],                 // 즐겨찾기는 Chromium이 맡는다
       downloads: await downloadsList(),
+      ...(runtime.extraState?.() || {}),
     });
   }, 30);
 }

@@ -9,10 +9,10 @@ export const WALLS = [
 ];
 export const STEP = {
   read_page: ['page', '페이지 읽기'], screenshot: ['image', '화면 보기'], navigate: ['globe', '이동'],
-  go_back: ['back', '뒤로'], new_tab: ['tabs', '새 탭 열기'], list_tabs: ['list', '탭 목록'],
+  go_back: ['back', '뒤로'], new_tab: ['tabs', '새 탭 열기'], open_app: ['page', '우리 화면 열기'], list_tabs: ['list', '탭 목록'],
   switch_tab: ['tabs', '탭 전환'], click: ['cursor', '클릭'], type: ['keyboard', '입력'],
   select_option: ['list', '선택'], scroll: ['scroll', '스크롤'], list_channels: ['hash', '채널 목록'],
-  post_to_channel: ['chat', '채널에 게시'], create_page: ['page', '결과 페이지 만들기'],
+  post_to_channel: ['chat', '채널에 게시'], create_page: ['page', '결과 페이지 만들기'], write_text: ['page', '글 쓰기 · 사실 검사'],
 };
 export const SUGS_NEW = [
   '국내 호텔 PMS(객실관리) 업체 5곳 찾아서 표로 정리해줘',

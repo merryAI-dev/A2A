@@ -35,7 +35,8 @@
     "unlimitedStorage",
     "downloads",
     "downloads.open",
-    "history"
+    "history",
+    "bookmarks"
   ],
   "host_permissions": [
     "<all_urls>"

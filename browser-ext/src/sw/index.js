@@ -2,7 +2,9 @@
 import '../shim/globals.js';
 import { on, handle, broadcast } from './hub.js';
 import { store, runtime, loadStore, saveStore, pushState, profile } from './state.js';
-import { CFG } from './config.js';
+import { CFG, ourUrl } from './config.js';
+import { httpUrl } from './agent.js';
+import { MODELS, SYNC_MODES, syncChanged } from './knowledge.js';
 import './browserdata.js';
 import './chat.js';
 import './tasks.js';
@@ -14,7 +16,38 @@ chrome.runtime.onInstalled.addListener(() => {
 });
 loadStore().then(pushState);
 
+// 에이전트 패널은 브라우저의 일부다 — 창마다 처음 한 번 연다. 사용자가 닫으면 다시 열지 않는다
+// (서비스 워커가 깰 때마다 열리지 않게 연 창을 세션 저장소에 적어 둔다).
+async function openAgentPanel(win) {
+  if (win.type !== 'normal' || win.incognito) return;
+  const { panelOpened = [] } = await chrome.storage.session.get('panelOpened');
+  if (panelOpened.includes(win.id)) return;
+  await chrome.storage.session.set({ panelOpened: [...panelOpened, win.id] });
+  chrome.sidePanel.open({ windowId: win.id }).catch((e) => console.warn('[panel]', e.message));
+}
+// 즐겨찾기에 우리 화면을 처음 한 번 넣는다(Electron 사이드바의 메리·학습·업무 지도 자리)
+async function seedBookmarks() {
+  const { bookmarksSeeded } = await chrome.storage.local.get('bookmarksSeeded');
+  if (bookmarksSeeded) return;
+  await chrome.storage.local.set({ bookmarksSeeded: true });
+  for (const [title, page] of [['메리', 'merry.html'], ['학습', 'learn.html'], ['업무 지도', 'map.html']]) {
+    await chrome.bookmarks.create({ parentId: '1', title, url: chrome.runtime.getURL(page) }).catch((e) => console.warn('[bookmarks]', e.message));
+  }
+}
+// 나중에 생긴 화면은 이미 쓰던 프로필에도 한 번 넣는다
+async function seedContactsBookmark() {
+  const { contactsSeeded } = await chrome.storage.local.get('contactsSeeded');
+  if (contactsSeeded) return;
+  await chrome.storage.local.set({ contactsSeeded: true });
+  await chrome.bookmarks.create({ parentId: '1', title: '접점 찾기', url: chrome.runtime.getURL('contacts.html') }).catch((e) => console.warn('[bookmarks]', e.message));
+}
+seedBookmarks().then(seedContactsBookmark);
+chrome.windows.onCreated.addListener(openAgentPanel);
+chrome.windows.getAll().then((all) => all.forEach(openAgentPanel)).catch(() => {});
+
 on('ui:ping', () => {});
+// 홈에서 고른 대화를 옆 패널이 연다
+on('room:go', (room) => broadcast('room:go', room));
 on('ui:hello', () => { pushState(); broadcast('hello', { at: Date.now() }); });
 handle('sys:ping', () => ({ pong: true, id: chrome.runtime.id, version: chrome.runtime.getManifest().version }));
 
@@ -24,6 +57,21 @@ on('tab:switch', async (id) => {
   const t = await chrome.tabs.update(id, { active: true }).catch(() => null);
   if (t) chrome.windows.update(t.windowId, { focused: true }).catch(() => {});
 });
+// 새 탭의 '검색' 칸 — 주소면 열고, 아니면 검색(Electron resolveInput과 같은 규칙). 그 새 탭 자리에서 연다.
+on('nav:go', async (raw, port) => {
+  const input = String(raw || '').trim();
+  if (!input) return;
+  const tabId = port?.sender?.tab?.id;
+  const open = (url) => (tabId != null ? chrome.tabs.update(tabId, { url }) : chrome.tabs.create({ url }));
+  // 우리 화면 — a2a://메리, 또는 그냥 "메리"(Electron 주소창과 같다)
+  const page = ourUrl(input);
+  if (page) return open(page);
+  const looksUrl = /^[a-z][a-z0-9+.-]*:\/\//i.test(input) || /^[^\s]+\.[a-z]{2,}(\/|:|$)/i.test(input) || /^localhost(:\d+)?/.test(input);
+  const url = looksUrl ? httpUrl(input) : `https://www.google.com/search?q=${encodeURIComponent(input)}`;
+  if (url) open(url);
+});
+// 메리·학습의 근거 링크 — 새 탭으로
+on('bookmark:open', (url) => { const u = httpUrl(String(url || '')); if (u) chrome.tabs.create({ url: u }); });
 on('tab:new', (url) => chrome.tabs.create(typeof url === 'string' && /^https?:\/\//.test(url) ? { url } : {}));
 
 // ── 설정 ──
@@ -31,6 +79,9 @@ on('prefs:set', async (key, value) => {
   await loadStore();
   if (key === 'notify' && typeof value === 'boolean') store.prefs.notify = value;
   else if (key === 'askProfile' && typeof value === 'boolean') store.prefs.askProfile = value;
+  else if ((key === 'worktype' || key === 'recall') && typeof value === 'boolean') store.prefs[key] = value;
+  else if (key === 'agentModel' && Object.hasOwn(MODELS, value)) store.prefs.agentModel = value;
+  else if (key === 'sync' && SYNC_MODES.includes(value)) { store.prefs.sync = value; saveStore(); syncChanged(); }
   else return;
   saveStore();
   pushState();

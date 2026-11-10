@@ -17,6 +17,10 @@ const manifest = () => ({
   writeBundle() {
     const m = JSON.parse(fs.readFileSync(r('./manifest.base.json'), 'utf8'));
     m.key = fs.readFileSync(r('./public-key.txt'), 'utf8').trim();
+    // 버전이 그대로면 Chromium은 프로필에 저장된 옛 서비스 워커를 계속 돌린다 — 빌드마다 올린다
+    const now = new Date();
+    const days = Math.floor((now - Date.UTC(2026, 0, 1)) / 86400000);
+    m.version = `${m.version}.${days}${String(Math.floor((now % 86400000) / 2000)).padStart(5, '0')}`.replace(/^(\d+\.\d+)\.\d+\.(\d+)(\d{5})$/, '$1.$2.$3');
     fs.writeFileSync(r('./dist/manifest.json'), JSON.stringify(m, null, 2));
   },
 });
@@ -34,6 +38,10 @@ export default defineConfig({
       { find: /^(node:)?crypto$/, replacement: r('./src/shim/crypto.js') },
       { find: /^(node:)?path$/, replacement: r('./node_modules/path-browserify/index.js') },
       { find: /^@anthropic-ai\/sdk$/, replacement: r('./src/shim/anthropic.js') },
+      { find: /^electron$/, replacement: r('./src/shim/electron.js') },
+      { find: /^(node:)?http$/, replacement: r('./src/shim/http.js') },
+      // browser/ema-mcp.js가 부르는 SDK — ESM 빌드를 이 폴더의 node_modules에서
+      { find: /^@modelcontextprotocol\/sdk\/(.*)$/, replacement: r('./node_modules/@modelcontextprotocol/sdk/dist/esm/$1') },
       // browser/ 화면(업무 지도)이 쓰는 라이브러리는 이 폴더의 node_modules에서
       { find: /^(react|react-dom|d3-force)(\/.*)?$/, replacement: r('./node_modules/$1$2') },
     ],
@@ -41,13 +49,16 @@ export default defineConfig({
   define: { __dirname: JSON.stringify('/a2a/browser'), 'process.env': '{}', 'process.pid': '1' },
   build: {
     outDir: '../dist', emptyOutDir: true, target: 'chrome140', modulePreload: false,
-    commonjsOptions: { include: [/browser\/[^/]+\.js$/, /browser\/invest\//, /node_modules/], requireReturnsDefault: 'preferred', transformMixedEsModules: true },
+    commonjsOptions: { include: [/browser\/[^/]+\.js$/, /browser\/invest\//, /browser\/learn\//, /node_modules/], requireReturnsDefault: 'preferred', transformMixedEsModules: true },
     rollupOptions: {
       input: {
         sidepanel: r('./src/sidepanel.html'),
         newtab: r('./src/newtab.html'),
         page: r('./src/page.html'),
         map: r('./src/map.html'),
+        merry: r('./src/merry.html'),
+        contacts: r('./src/contacts.html'),
+        learn: r('./src/learn.html'),
         sw: r('./src/sw/index.js'),
       },
       output: { entryFileNames: (c) => (c.name === 'sw' ? 'sw.js' : 'assets/[name]-[hash].js') },

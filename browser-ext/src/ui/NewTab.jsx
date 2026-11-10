@@ -77,7 +77,7 @@ export default function NewTab() {
   const submit = () => {
     const v = text.trim();
     if (!v) return;
-    if (mode === 'ai') { if (S.busy) return; runAgentFresh(v); } else a2a.send('nav:go', v);
+    if (mode === 'ai') { if (S.busy || !S.hasKey) return; runAgentFresh(v); } else a2a.send('nav:go', v);
     setText('');
   };
 
@@ -126,10 +126,10 @@ export default function NewTab() {
         {mention.picker && <div className="absolute top-full right-0 left-0 mt-2">{mention.picker}</div>}
         </div>
 
-        {!S.hasKey && <div className="mt-3 text-xs text-warn">ANTHROPIC_API_KEY가 없습니다 — A2A/.env에 넣거나 환경변수로 실행하세요.</div>}
+        {!S.hasKey && <div className="mt-3 text-xs text-warn">Anthropic API 키가 없습니다 — 옆 패널 입력창 위에 넣어 주세요.</div>}
 
         <div className="mt-4 flex flex-wrap justify-center gap-2">
-          {SUGS_NEW.map((s) => <Suggestion key={s} text={s} onPick={(v) => { setMode('ai'); runAgentFresh(v); }} />)}
+          {SUGS_NEW.map((s) => <Suggestion key={s} text={s} onPick={(v) => { setMode('ai'); if (S.hasKey) runAgentFresh(v); else setText(v); }} />)}
         </div>
 
         <div className="mt-[54px] w-full">

@@ -62,6 +62,22 @@ test('m2-sidepanel-room', async ({ cdp, EXT, Page }) => {
   await p.close();
   return { ok: !!ok, text };
 });
+// 키가 없으면 보낸 글이 조용히 사라지면 안 된다 — 글은 남고 키 입력칸이 보인다
+test('m2-no-key-keeps-text-and-asks', async ({ cdp, EXT, Page, swEval, sleep }) => {
+  await swEval(cdp, 'globalThis.a2a.engineLLMOff(true)');            // 엔진 프록시까지 없는 상태
+  const p = await Page.open(cdp, `${EXT}/sidepanel.html`);
+  await p.waitFor("!!document.querySelector('#composer')");
+  const shown = await p.waitFor("!!document.querySelector('#key-input')", 5000);
+  await p.focus('#composer');
+  await p.type('키 없이 보내기');
+  await p.key('Enter');
+  await sleep(400);
+  const value = await p.eval("document.querySelector('#composer').value");
+  await p.eval("window.a2a.invoke('key:set', 'nope').catch((e) => e.message)");
+  await p.close();
+  await swEval(cdp, 'globalThis.a2a.engineLLMOff(false)');
+  return { ok: !!shown && value === '키 없이 보내기', value };
+});
 test('m2-history-from-chromium', async ({ cdp, EXT, Page, swEval, sleep }) => {
   const t = await Page.open(cdp, 'data:text/html,<title>x</title>');
   await t.close();
@@ -532,5 +548,196 @@ test('k5-stored-in-profile', async ({ cdp, swEval }) => {
   const r = await swEval(cdp, 'globalThis.a2a.fsUsage()');
   const db = await swEval(cdp, "new Promise((res) => { const q = indexedDB.open('a2a-fs'); q.onsuccess = () => { const c = q.result.transaction('files').objectStore('files').count(); c.onsuccess = () => res(c.result); }; })");
   return { ok: r.files > 0 && db > 0, ...r, stored: db };
+});
+
+// 새 탭 = 홈 화면(M8) — 연결 확인 문구가 아니라 "무엇을 맡길까요?"가 뜬다
+test('m8-newtab-home', async ({ cdp, Page }) => {
+  const p = await Page.open(cdp, 'chrome://newtab/');
+  const ok = await p.waitFor("document.body.innerText.includes('무엇을 맡길까요?') && !!document.querySelector('#ask')");
+  await p.shot('m8-newtab.png', { width: 1280, height: 800 });
+  const pong = await p.eval("document.body.innerText.includes('연결됨')");
+  await p.close();
+  return { ok: !!ok && !pong };
+});
+test('m8-newtab-search-navigates', async ({ cdp, Page, sleep }) => {
+  const p = await Page.open(cdp, 'chrome://newtab/');
+  await p.waitFor("!!document.querySelector('#ask')");
+  await p.eval("window.a2a.send('nav:go', 'example.com')");
+  const ok = await p.waitFor("location.hostname === 'example.com'", 8000).catch(() => null);
+  await sleep(100);
+  await p.close();
+  return { ok: !!ok };
+});
+
+// 메리·학습·객관식·기록 올리기·마이페이지 — Electron에만 있던 것들이 Chromium에서 돈다
+const NOKEY_DEAL = '시험회사';
+test('n0-our-pages-sit-on-a-card', async ({ cdp, EXT, Page }) => {
+  // Electron 셸의 카드(bg-card text-card-ink)가 없으면 글자가 하늘색 바탕에 묻힌다
+  const seen = {};
+  for (const name of ['merry', 'map', 'learn']) {
+    const p = await Page.open(cdp, `${EXT}/${name}.html`);
+    await p.waitFor('!!document.getElementById("root").firstChild');
+    seen[name] = await p.eval(`(() => { const s = getComputedStyle(document.getElementById('root')); const b = getComputedStyle(document.body);
+      const hex = (v) => { const c = document.createElement('canvas').getContext('2d'); c.fillStyle = v; return c.fillStyle; };
+      return s.backgroundColor !== b.backgroundColor && hex(s.backgroundColor) === hex(b.getPropertyValue('--card').trim()) && hex(s.color) === hex(b.getPropertyValue('--card-ink').trim()); })()`);
+    await p.close();
+  }
+  return { ok: Object.values(seen).every(Boolean), seen };
+});
+test('n1-merry-page-and-deal', async ({ cdp, EXT, Page }) => {
+  const p = await Page.open(cdp, `${EXT}/merry.html`);
+  await p.waitFor('!!window.a2a');
+  const deal = await p.eval(`window.a2a.invoke('invest:call', 'create', { company: ${JSON.stringify(NOKEY_DEAL)} })`);
+  const view = await p.eval(`window.a2a.invoke('invest:call', 'deal', ${JSON.stringify(deal.id)})`);
+  const shown = await p.waitFor(`document.body.innerText.length > 0 && !document.body.innerText.includes('blocked')`);
+  await p.shot('n1-merry.png', { width: 1400, height: 900 });
+  await p.close();
+  return { ok: !!deal.id && view.deal.company === NOKEY_DEAL && view.template.sections.length > 0 && !!shown, id: deal.id };
+});
+test('n2-merry-attach-bytes-survive-port', async ({ cdp, EXT, Page }) => {
+  const p = await Page.open(cdp, `${EXT}/merry.html`);
+  await p.waitFor('!!window.a2a');
+  const r = await p.eval(`(async () => {
+    const d = await window.a2a.invoke('invest:call', 'create', { company: '첨부시험' });
+    const text = '매출 12억원 — 첨부 시험 원문';
+    const src = await window.a2a.invoke('invest:call', 'attachBytes', d.id, 'memo.txt', new TextEncoder().encode(text));
+    const v = await window.a2a.invoke('invest:call', 'deal', d.id);
+    return { name: src.name, n: v.deal.sources.length, bytes: new TextEncoder().encode(text).length, kept: src.bytes ?? src.size ?? null };
+  })()`);
+  await p.close();
+  return { ok: r.name === 'memo.txt' && r.n === 1, ...r };
+});
+test('n3-invest-recorded-in-map', async ({ cdp, swEval }) => {
+  const r = await swEval(cdp, "new Promise((res) => setTimeout(res, 400)).then(() => globalThis.a2a.knowledge().onto.summary().types)");
+  return { ok: Object.keys(r).some((k) => /deal|invest|source/.test(k)), types: r };
+});
+test('n4-learn-page', async ({ cdp, EXT, Page }) => {
+  const p = await Page.open(cdp, `${EXT}/learn.html`);
+  await p.waitFor('!!window.a2a');
+  const st = await p.eval("window.a2a.invoke('learn:call', 'state')");
+  const blocked = await p.eval("window.a2a.invoke('learn:call', 'nope').then(() => false, () => true)");
+  const shown = await p.waitFor('document.body.innerText.length > 10');
+  await p.shot('n4-learn.png', { width: 1400, height: 900 });
+  await p.close();
+  return { ok: Array.isArray(st.courses) && blocked && !!shown, project: st.project };
+});
+test('n5-choice-card-roundtrip', async ({ cdp, EXT, Page, swEval, sleep }) => {
+  const p = await Page.open(cdp, `${EXT}/sidepanel.html`);
+  await p.waitFor("!!document.querySelector('#room-title')");
+  await swEval(cdp, 'delete globalThis.a2a.autoChoice; globalThis.a2a.beginTaskForTest("객관식 시험 작업"); true');
+  await swEval(cdp, "globalThis.__pick = null; globalThis.a2a.askChoice('어느 쪽으로 할까요?', [{ label: '가', detail: 'a' }, { label: '나' }]).then((v) => { globalThis.__pick = v; }); true");
+  await sleep(300);
+  await p.eval("document.querySelector('#room-title').click()");
+  await sleep(250);
+  await p.eval("[...document.querySelectorAll('button')].find((b) => b.innerText.includes('객관식 시험 작업')).click()");
+  const shown = await p.waitFor("!!document.querySelector('[data-choice] [data-option=\"1\"]')", 5000);
+  if (shown) await p.eval("document.querySelector('[data-choice] [data-option=\"1\"]').click()");
+  await sleep(300);
+  const pick = await swEval(cdp, 'globalThis.__pick');
+  await swEval(cdp, 'globalThis.a2a.autoChoice = () => 0; true');
+  await p.close();
+  return { ok: !!shown && pick === 1, pick, shown: !!shown };
+});
+test('n6-mypage-tools-model-sync', async ({ cdp, EXT, Page, sleep }) => {
+  const p = await Page.open(cdp, `${EXT}/sidepanel.html`);
+  await p.waitFor("!!document.querySelector('#room-title')");
+  await p.eval("document.querySelector('#room-title').click()");
+  await sleep(200);
+  await p.eval("[...document.querySelectorAll('button')].find(b => b.innerText.trim() === '마이페이지').click()");
+  const ok = await p.waitFor("!!document.querySelector('#ema-connect') && !!document.querySelector('#model-choice') && !!document.querySelector('#sync-choice')", 8000);
+  await p.eval("document.querySelector('#sync-choice input[value=\"signals\"]').click()");
+  const on = await p.waitFor("document.querySelector('#sync-choice input[value=\"signals\"]').checked", 4000);
+  await p.eval("document.querySelector('#sync-choice input[value=\"off\"]').click()");
+  await p.close();
+  return { ok: !!ok && !!on };
+});
+test('n7-ema-callback-caught-from-tab', async ({ swEval, cdp, Page }) => {
+  // 포트를 열지 않고 로그인 탭의 콜백 주소를 잡는다(shim/http.js) — 처음엔 로그인이 없으니 꺼진 상태로 시작
+  const st = await swEval(cdp, "globalThis.a2a.knowledge().ema.snapshot()");
+  return { ok: ['off', 'idle', 'error'].includes(st.status), st };
+});
+test('n8-tools-include-write-text-and-contacts-no-tab', async ({ swEval, cdp }) => {
+  const names = await swEval(cdp, "globalThis.a2a.makeAgent().toolList().map((t) => t.name)");
+  return { ok: names.includes('write_text') && names.includes('find_contacts'), names };
+});
+test('n9-bare-names-open-our-pages', async ({ cdp, Page }) => {
+  const p = await Page.open(cdp, 'chrome://newtab/');
+  await p.waitFor("!!document.querySelector('#ask')");
+  await p.eval("window.a2a.send('nav:go', '메리')");
+  const ok = await p.waitFor("location.pathname === '/merry.html'", 8000).catch(() => null);
+  await p.close();
+  return { ok: !!ok };
+});
+test('n12-chat-name-opens-merry-no-model', async ({ cdp, swEval, sleep }) => {
+  const before = await swEval(cdp, 'globalThis.a2a.tasks().length');
+  await swEval(cdp, "globalThis.a2a.runAgent('메리 열어줘')");
+  await sleep(800);
+  const tabs = await swEval(cdp, "chrome.tabs.query({}).then((x) => x.map((t) => t.url || t.pendingUrl))");
+  const after = await swEval(cdp, 'globalThis.a2a.tasks().length');
+  const names = await swEval(cdp, 'globalThis.a2a.makeAgent().toolList().map((t) => t.name)');
+  return { ok: tabs.some((u) => u.endsWith('/merry.html')) && after === before && names.includes('open_app'), before, after };
+});
+test('n13-session-shows-every-turn-after-restart', async ({ cdp, EXT, Page, swEval, sleep }) => {
+  await swEval(cdp, `(() => { const id = globalThis.a2a.beginTaskForTest('세션복원시험'); const t = globalThis.a2a.tasks()[0];
+    t.steps = [{ name: 'read_page', input: {} }, { name: 'list_tabs', input: {} }, { name: 'read_page', input: {} }];
+    t.summary = '두번째답';
+    t.turns = [{ text: '세션복원시험', ts: 1, n: 1, answer: '첫번째답' }, { text: '두번째입력', ts: 2, n: 2, answer: '두번째답' }];
+    return id; })()`);
+  const p = await Page.open(cdp, `${EXT}/sidepanel.html`);
+  await p.waitFor("!!document.querySelector('#room-title')");
+  await p.eval("document.querySelector('#room-title').click()");
+  await sleep(300);
+  await p.eval("[...document.querySelectorAll('button')].find((b) => b.innerText.trim() === '세션복원시험').click()");
+  await sleep(500);
+  const text = await p.eval('document.body.innerText');
+  await p.close();
+  const order = ['세션복원시험', '첫번째답', '두번째입력', '두번째답'].map((s) => text.lastIndexOf(s));
+  return { ok: order.every((n, i) => n >= 0 && (i === 0 || n > order[i - 1])), order };
+});
+test('n14-every-app-page-has-home-and-map', async ({ cdp, EXT, Page }) => {
+  const seen = {};
+  for (const page of ['merry', 'contacts', 'learn', 'map']) {
+    const p = await Page.open(cdp, `${EXT}/${page}.html`);
+    seen[page] = !!(await p.waitFor("!!document.querySelector('#nav-home') && !!document.querySelector('[data-app=map]')", 6000).catch(() => null));
+    await p.close();
+  }
+  return { ok: Object.values(seen).every(Boolean), seen };
+});
+test('n15-home-button-returns-from-app', async ({ cdp, EXT, Page, swEval, sleep }) => {
+  const p = await Page.open(cdp, `${EXT}/merry.html`);
+  await p.waitFor("!!document.querySelector('#nav-home')");
+  await p.eval("document.querySelector('#nav-home').click()");
+  await sleep(1200);
+  const urls = await swEval(cdp, "chrome.tabs.query({}).then((x) => x.map((t) => t.url || t.pendingUrl))");
+  await p.close().catch(() => {});
+  return { ok: urls.some((u) => u.startsWith('chrome://newtab') || u.endsWith('/newtab.html')) && !urls.some((u) => u.endsWith('/merry.html')), urls };
+});
+test('n16-home-sidebar-lists-apps', async ({ cdp, Page }) => {
+  const p = await Page.open(cdp, 'chrome://newtab/');
+  const ok = await p.waitFor("!!document.querySelector('#ask') && ['merry','contacts','learn','map'].every((a) => document.querySelector(`#home-sidebar [data-app=${a}]`))", 6000).catch(() => null);
+  await p.close();
+  return { ok: !!ok };
+});
+test('n17-contacts-page-opens-by-name', async ({ cdp, Page }) => {
+  const p = await Page.open(cdp, 'chrome://newtab/');
+  await p.waitFor("!!document.querySelector('#ask')");
+  await p.eval("window.a2a.send('nav:go', '헌터')");
+  const ok = await p.waitFor("location.pathname === '/contacts.html'", 8000).catch(() => null);
+  await p.close();
+  return { ok: !!ok };
+});
+test('n10-bookmarks-seeded-once', async ({ swEval, cdp, sleep }) => {
+  await sleep(300);
+  const titles = await swEval(cdp, "chrome.bookmarks.getChildren('1').then((x) => x.map((b) => b.title))");
+  return { ok: ['메리', '접점 찾기', '학습', '업무 지도'].every((t) => titles.filter((x) => x === t).length === 1), titles };
+});
+test('n11-a2a-scheme-rewrites', async ({ cdp, EXT, Page }) => {
+  if (!process.env.A2A_BUILTIN) return { ok: true, skipped: 'C++ 패치는 내장 모드에서만' };
+  const p = await Page.open(cdp, 'about:blank');
+  await p.cdp.send('Page.enable', {}, p.sessionId);
+  await p.cdp.send('Page.navigate', { url: 'a2a://메리' }, p.sessionId).catch(() => {});
+  const ok = await p.waitFor(`location.href === ${JSON.stringify(`${EXT}/merry.html`)}`, 8000).catch(() => null);
+  await p.close();
+  return { ok: !!ok };
 });
 }

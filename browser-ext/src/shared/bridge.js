@@ -28,6 +28,13 @@ connect();
 // 서비스 워커가 잠들지 않게 — 화면이 열려 있는 동안 25초마다 한 번
 setInterval(() => port?.postMessage({ kind: 'send', ch: 'ui:ping', args: [] }), 25000);
 
+// 포트는 JSON만 나른다 — 파일 바이트(Uint8Array)는 base64로 감싸 보낸다(서비스 워커 hub.js가 푼다)
+function wire(v) {
+  if (!(v instanceof Uint8Array)) return v;
+  let bin = '';
+  for (let i = 0; i < v.length; i += 0x8000) bin += String.fromCharCode(...v.subarray(i, i + 0x8000));
+  return { __bytes: btoa(bin) };
+}
 const a2a = {
   send: (ch, ...args) => port?.postMessage({ kind: 'send', ch, args }),
   on: (ch, cb) => {
@@ -39,7 +46,7 @@ const a2a = {
     if (!port) { reject(new Error('연결 안 됨')); return; }
     const id = ++seq;
     pending.set(id, { resolve, reject });
-    port.postMessage({ kind: 'invoke', id, ch, args });
+    port.postMessage({ kind: 'invoke', id, ch, args: args.map(wire) });
   }),
 };
 window.a2a = a2a;

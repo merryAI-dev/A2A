@@ -78,6 +78,105 @@ function Passwords() {
   );
 }
 
+// 연결된 도구 — EMA Station(MCP). 로그인은 새 탭에서 직접, 토큰은 이번 브라우저 세션 메모리에만 둔다.
+const EMA_TEXT = {
+  off: '연결 안 됨', idle: '연결 확인 중…', connecting: '연결하는 중…',
+  login: '새 탭에서 EMA에 로그인해 주세요', on: '연결됨', error: '연결이 끊겼어요',
+};
+function EmaConnect({ ema }) {
+  const st = ema?.status || 'off';
+  const busy = st === 'connecting' || st === 'login' || st === 'idle';
+  return (
+    <div id="ema-connect" className="flex items-center gap-3 text-[13px]">
+      <span className="grid size-9 shrink-0 place-items-center rounded-[10px] bg-raise text-[11px] font-bold">EMA</span>
+      <span className="min-w-0 flex-1">
+        <span className="block font-medium">EMA Station</span>
+        <span className={`block truncate text-[11.5px] ${st === 'on' ? 'text-ok' : st === 'error' ? 'text-warn' : 'text-card-faint'}`}>
+          {EMA_TEXT[st]}{st === 'on' ? ` · 도구 ${ema.tools}개 · AI가 등록 기업·오피스아워를 조회해요` : ''}{st === 'error' && ema.error ? ` — ${ema.error}` : ''}
+        </span>
+      </span>
+      {st === 'on' ? (
+        <button onClick={() => a2a.send('ema:disconnect')} className="h-8 rounded-lg px-3 text-xs font-semibold ring-1 ring-card-line hover:bg-raise">연결 끊기</button>
+      ) : (
+        <button disabled={busy} onClick={() => a2a.send('ema:connect')}
+                className="h-8 rounded-lg bg-card-ink px-3 text-xs font-semibold text-card disabled:opacity-40">{st === 'error' ? '다시 연결' : '연결'}</button>
+      )}
+    </div>
+  );
+}
+
+// 업무 기록 올리기(L1) — 어디까지 올릴지 고른다. 업무 지도·하네스 개선이 팀 단위로 돌려면 필요(docs/HARNESS.md)
+const SYNC = [
+  ['off', '끔', '이 컴퓨터에만 남겨요'],
+  ['signals', '신호만', '어떤 도구를 썼고 무엇을 승인/거절했는지 — 원문·주소·입력 없음'],
+  ['hashes', '해시까지', '+ 원문 해시·문서 종류·사이트 이름(내용은 안 올라가요)'],
+  ['full', '원문까지', '+ 마스킹한 원문 — 서버에서 재실행 비교를 하려면 필요'],
+];
+function SyncChoice({ sync }) {
+  const cur = sync?.mode || 'off';
+  return (
+    <div id="sync-choice" className="space-y-1">
+      {SYNC.map(([k, t, d]) => (
+        <label key={k} className="flex cursor-default items-start gap-2.5 rounded-lg px-1 py-1 text-[13px] hover:bg-raise">
+          <input type="radio" name="sync" value={k} checked={cur === k} onChange={() => setPref('sync', k)} className="mt-1 accent-[#ff6b45]" />
+          <span><span className="font-medium">{t}</span><span className="block text-[11.5px] text-card-faint">{d}</span></span>
+        </label>
+      ))}
+      {cur !== 'off' && (
+        <div className="flex items-center gap-2 pt-1 text-[11.5px] text-card-sub">
+          {sync.running ? '올리는 중…' : sync.last ? `마지막 ${ago(Date.parse(sync.last))} · 이번 실행 ${sync.sent}건` : '곧 올려요'}
+          {sync.server?.mine && <span>· 서버에 내 기록 {sync.server.mine.events}건</span>}
+          {sync.error && <span className="text-warn">· {sync.error}</span>}
+          <button onClick={() => a2a.invoke('onto:call', 'syncNow')} className="ml-auto rounded-lg px-2 py-0.5 ring-1 ring-card-line hover:bg-raise">지금 올리기</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// 에이전트 기본 모델 — 업무 유형마다 정한 모델이 있으면 그쪽이 먼저(업무 지도 → 업무 유형)
+function ModelChoice({ m }) {
+  if (!m) return null;
+  return (
+    <div id="model-choice" className="space-y-1">
+      {m.choices.map((c) => (
+        <label key={c.id} className="flex cursor-default items-start gap-2.5 rounded-lg px-1 py-1 text-[13px] hover:bg-raise">
+          <input type="radio" name="agentModel" value={c.id} checked={m.base === c.id} onChange={() => setPref('agentModel', c.id)} className="mt-1 accent-[#ff6b45]" />
+          <span><span className="font-medium">{c.label}</span>
+            <span className="block text-[11.5px] text-card-faint">{c.id.includes('opus') ? '깊게 생각 · 비쌈(입력 $4 / 출력 $20, 100만 토큰당)' : '중간급 · 절반 가격(입력 $2 / 출력 $10)'}</span></span>
+        </label>
+      ))}
+      <div className="pt-1 text-[11.5px] text-card-faint">업무 유형별로 재실행 비교를 해 보고 유형마다 따로 정할 수 있어요(업무 지도 → 업무 유형).</div>
+    </div>
+  );
+}
+
+// Anthropic API 키 입력 — 값은 이 브라우저 프로필에만 저장되고 화면에 다시 보이지 않는다
+export function KeySetup({ compact = false }) {
+  const [val, setVal] = useState('');
+  const [state, setState] = useState(null);       // null | 'saving' | { error }
+  const save = async () => {
+    if (!val.trim() || state === 'saving') return;
+    setState('saving');
+    try { await a2a.invoke('key:set', val.trim()); setVal(''); setState(null); }
+    catch (e) { setState({ error: String(e.message || e) }); }
+  };
+  return (
+    <div id="key-setup" className={compact ? 'mx-3 mb-2 rounded-xl bg-accent-soft p-2.5 ring-1 ring-accent/40 ring-inset' : ''}>
+      {compact && <div className="mb-1.5 text-xs font-semibold text-card-ink">에이전트를 쓰려면 Anthropic API 키가 필요해요</div>}
+      <div className="flex gap-2">
+        <input id="key-input" type="password" autoComplete="off" spellCheck={false} value={val} placeholder="sk-ant-…"
+               onChange={(e) => { setVal(e.target.value); setState(null); }}
+               onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); save(); } }}
+               className="h-8 min-w-0 flex-1 rounded-lg bg-field px-2.5 text-[12.5px] text-card-ink ring-1 ring-field-line outline-none select-text" />
+        <button id="key-save" type="button" onClick={save} disabled={!val.trim() || state === 'saving'}
+                className="h-8 shrink-0 rounded-lg bg-accent px-3 text-xs font-semibold text-white disabled:bg-raise disabled:text-card-faint">저장</button>
+      </div>
+      {state?.error && <div className="mt-1.5 text-[11.5px] text-warn">{state.error}</div>}
+    </div>
+  );
+}
+
 export default function MyPage() {
   const me = useStore((s) => s.me);
   const S = useStore((s) => s.S);
@@ -104,8 +203,12 @@ export default function MyPage() {
       <div className="flex flex-col items-center gap-2 px-5 pt-6 pb-5 text-center">
         <Avatar id={me.user_id} name={me.display_name} size="xl" />
         <div className="text-[17px] font-semibold">{me.display_name}</div>
-        <div className="text-xs text-card-faint">@{me.user_id} · {me.tenant} · {ROLE[me.role] || me.role}</div>
+        <div className="text-xs text-card-faint">@{me.user_id} · {S.tenantName || me.tenant} · {ROLE[me.role] || me.role}</div>
       </div>
+
+      <Section title="Anthropic API 키" note={S.hasKey ? '저장되어 있어요 — 바꾸려면 새 키를 넣으세요' : '에이전트를 쓰려면 필요해요'}>
+        <KeySetup />
+      </Section>
 
       <Section title="표시 이름" note="팀원에게 이렇게 보여요">
         <form onSubmit={(e) => { e.preventDefault(); save(); }} className="flex gap-2">
@@ -148,6 +251,18 @@ export default function MyPage() {
             <span className={`absolute top-0.5 size-5 rounded-full bg-white shadow transition-all ${prefs.notify ? 'left-[18px]' : 'left-0.5'}`} />
           </button>
         </label>
+      </Section>
+
+      <Section title="연결된 도구" note="로그인은 직접 · 이번 세션 동안만 유지">
+        <EmaConnect ema={S.ema} />
+      </Section>
+
+      <Section title="에이전트 모델" note="새 작업부터 · 기본 Opus 5.5">
+        <ModelChoice m={S.agentModel} />
+      </Section>
+
+      <Section title="업무 기록 올리기" note="워크스페이스로 · 기본 꺼짐">
+        <SyncChoice sync={S.sync} />
       </Section>
 
       <Section title="저장된 비밀번호" note="이 컴퓨터 · 암호화 · AI는 못 봄">

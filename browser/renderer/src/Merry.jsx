@@ -728,7 +728,7 @@ export default function Merry() {
       else if (p.type === 'draft') setLive((l) => ({ ...l, draft: p.html, draftSection: p.html ? p.section : null }));
       else if (p.type === 'reply') setLive((l) => ({ ...l, reply: p.text || '' }));
       else if (p.type === 'step') setLive((l) => ({ ...l, step: p.text }));
-      else if (p.type === 'idle') { setLive({ thinking: '', label: '', draft: null, draftSection: null, reply: '', step: '' }); refresh(); }
+      else if (p.type === 'idle') { setProgress(''); setLive({ thinking: '', label: '', draft: null, draftSection: null, reply: '', step: '' }); refresh(); }
       else if (p.type === 'busy' || p.type === 'ask') refresh();
       else if (p.text) setProgress(p.text);
     });

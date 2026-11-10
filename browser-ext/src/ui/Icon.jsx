@@ -1,6 +1,7 @@
 // 선 아이콘(24 그리드, currentColor)
 const P = {
   graph: <><circle cx="6" cy="7" r="2.2" /><circle cx="18" cy="6" r="2.2" /><circle cx="12" cy="17.5" r="2.4" /><path d="M8 8.2l2.7 7.3M16.3 7.7l-3.2 7.8M8.2 6.8l7.6-.6" /></>,
+  flask: <path d="M9.5 4.5h5M10.5 4.5v5L5.8 17.3A1.5 1.5 0 0 0 7.1 19.5h9.8a1.5 1.5 0 0 0 1.3-2.2L13.5 9.5v-5M8 14h8" />,
   back: <path d="M15 18l-6-6 6-6" />,
   fwd: <path d="M9 18l6-6-6-6" />,
   reload: <><path d="M20 12a8 8 0 1 1-2.34-5.66" /><path d="M20 4v5h-5" /></>,

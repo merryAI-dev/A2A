@@ -76,6 +76,7 @@ function applyAgent(logs, ev) {
       break;
     case 'page': items.push({ k: 'page', spec: ev.spec, tabId: ev.tabId, ts }); break;
     case 'confirm': items.push({ k: 'confirm', id: ev.id, text: ev.text, answer: null, ts }); break;
+    case 'choice': items.push({ k: 'choice', id: ev.id, title: ev.title, options: ev.options || [], answer: ev.answer ?? null, ts }); break;
     // 알림의 [승인]/[거절]로 답했을 때도 화면의 승인 카드가 따라 바뀐다
     case 'answered': {
       const i = items.findIndex((it) => it.k === 'confirm' && it.id === ev.id);
@@ -393,6 +394,16 @@ export async function send(text, { fresh } = {}) {
 }
 
 // 새 탭의 "AI에게" — 항상 새 AI 대화
+export function answerChoice(taskId, id, index) {
+  a2a.send('agent:choose', id, index);
+  update((s) => {
+    const L = s.logs[taskId];
+    if (!L) return {};
+    const items = L.items.map((it) => (it.k === 'choice' && it.id === id ? { ...it, answer: index } : it));
+    return { logs: { ...s.logs, [taskId]: { ...L, items } } };
+  });
+}
+
 export function runAgentFresh(text) {
   if (snap.S?.busy) return;
   update(() => ({ room: { kind: 'ai', id: null } }));

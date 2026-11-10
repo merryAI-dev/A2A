@@ -1,0 +1,94 @@
+// 접점 찾기 — 회사 도메인으로 공개 페이지의 메일을 찾는 전용 화면. 일은 엔진(/v1/contacts/discover)이 한다.
+import '../shared/bridge.js';
+import { createRoot } from 'react-dom/client';
+import { useState } from 'react';
+import '../map/map.css';
+import Icon from '../ui/Icon.jsx';
+import { AppFrame } from '../ui/AppNav.jsx';
+
+const VERIFY = {
+  smtp_ok: ['수신 확인', 'text-info'], smtp_rejected: ['없는 주소', 'text-accent'],
+  smtp_catch_all: ['모든 주소를 받는 곳 · 개별 확인 불가', 'text-card-sub'], mx_ok: ['메일 서버 있음', 'text-card-sub'],
+  no_mx: ['메일 서버 없음', 'text-accent'], unknown: ['확인 못 함', 'text-card-faint'], unchecked: ['확인 안 함', 'text-card-faint'],
+};
+const Field = (p) => <input {...p} className={`h-9 rounded-lg bg-field px-3 text-[13px] ring-1 ring-field-line outline-none focus:ring-card-faint ${p.className || ''}`} />;
+const Tag = ({ children }) => <span className="rounded bg-raise px-1.5 py-0.5 text-[11px] text-card-sub">{children}</span>;
+
+function Email({ e }) {
+  const [copied, setCopied] = useState(false);
+  const [label, color] = VERIFY[e.verify?.status] || VERIFY.unknown;
+  const src = e.sources?.[0];
+  const copy = async () => { await navigator.clipboard.writeText(e.address); setCopied(true); setTimeout(() => setCopied(false), 1200); };
+  return (
+    <li className="contact-row border-b border-card-line py-3 last:border-0">
+      <div className="flex flex-wrap items-center gap-2">
+        <b className="text-[14px] font-semibold select-text">{e.address}</b>
+        <button title="주소 복사" onClick={copy} className="grid size-6 place-items-center rounded-md text-card-sub hover:bg-raise">
+          <Icon name={copied ? 'check' : 'copy'} className="size-3.5" />
+        </button>
+        {e.generic && <Tag>대표 주소</Tag>}
+        {!e.same_domain && <Tag>다른 도메인</Tag>}
+        <span className={`text-[11.5px] ${color}`} title={e.verify?.detail || ''}>{label}</span>
+      </div>
+      {src && (
+        <div className="mt-1 text-[12px] leading-relaxed text-card-sub">
+          “{src.quote}”{' '}
+          <a href={src.url} target="_blank" rel="noreferrer" className="break-all text-info hover:underline">{src.url}</a>
+        </div>
+      )}
+      {e.method === 'pattern' && <div className="mt-1 text-[12px] text-card-sub">이 회사의 메일 형식으로 추측한 주소입니다({e.pattern}). 출처가 없으니 보내기 전에 확인하세요.</div>}
+    </li>
+  );
+}
+
+function Contacts() {
+  const [f, setF] = useState({ domain: '', company: '', person_first: '', person_last: '' });
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const [out, setOut] = useState(null);
+  const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+  const find = async (e) => {
+    e.preventDefault();
+    if (!f.domain.trim() || busy) return;
+    setBusy(true); setErr(''); setOut(null);
+    try { setOut(await window.a2a.invoke('contacts:find', f)); }
+    catch (x) { setErr(String(x.message || x)); }
+    finally { setBusy(false); }
+  };
+  const found = out?.emails.filter((x) => x.method !== 'pattern') || [];
+  const guessed = out?.emails.filter((x) => x.method === 'pattern') || [];
+  return (
+    <div id="contacts" className="absolute inset-0 overflow-y-auto">
+      <div className="mx-auto max-w-[760px] px-6 pt-10 pb-16">
+        <h1 className="text-[24px] font-bold tracking-tight">접점 찾기</h1>
+        <p className="mt-1 mb-6 text-[13px] text-card-sub">회사 도메인을 넣으면 공개 페이지에서 메일 주소를 찾아 출처와 함께 보여 드려요.</p>
+        <form onSubmit={find} className="grid grid-cols-2 gap-2">
+          <Field id="contact-domain" autoFocus className="col-span-2" placeholder="회사 도메인 (예: mysc.co.kr)" value={f.domain} onChange={set('domain')} />
+          <Field placeholder="회사 이름 (선택)" className="col-span-2" value={f.company} onChange={set('company')} />
+          <Field placeholder="담당자 이름 (선택 · 영문, 예: Hana)" value={f.person_first} onChange={set('person_first')} />
+          <Field placeholder="담당자 성 (선택 · 영문, 예: Park)" value={f.person_last} onChange={set('person_last')} />
+          <button id="contact-find" disabled={!f.domain.trim() || busy} className="col-span-2 mt-1 h-9 rounded-lg bg-card-ink text-[13px] font-semibold text-card disabled:opacity-40">
+            {busy ? '공개 페이지를 읽는 중… (최대 1분쯤 걸려요)' : '메일 찾기'}
+          </button>
+        </form>
+        {err && <div className="mt-4 text-[13px] text-accent">{err}</div>}
+        {out && (
+          <section id="contact-result" className="mt-8">
+            <div className="text-[13px] text-card-sub">{out.domain} · 페이지 {out.pages.length}장을 읽었어요{out.errors?.length ? ` · ${out.errors.length}장 실패` : ''}{out.patterns?.length ? ` · 메일 형식 ${out.patterns.map((p) => p.pattern).join(', ')}` : ''}</div>
+            {!out.emails.length && <div className="mt-4 text-[14px]">공개 페이지에서 메일 주소를 찾지 못했어요.</div>}
+            {found.length > 0 && <ul className="mt-3">{found.map((e) => <Email key={e.address} e={e} />)}</ul>}
+            {guessed.length > 0 && (
+              <>
+                <h2 className="mt-6 text-[13px] font-semibold">추측한 주소</h2>
+                <ul className="mt-1">{guessed.map((e) => <Email key={e.address} e={e} />)}</ul>
+              </>
+            )}
+          </section>
+        )}
+      </div>
+    </div>
+  );
+}
+
+document.body.dataset.tone = 'light';
+createRoot(document.getElementById('root')).render(<AppFrame current="contacts"><Contacts /></AppFrame>);

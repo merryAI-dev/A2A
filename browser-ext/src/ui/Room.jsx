@@ -6,12 +6,12 @@ import Markdown from './Markdown.jsx';
 import { Mark, Suggestion } from './NewTab.jsx';
 import { Avatar, Chip, MentionChips, useMentionPicker } from './Mentions.jsx';
 import {
-  a2a, useStore, update, send, route, destChannel, answerConfirm, addMention, react, loadOlder,
+  a2a, useStore, update, send, route, destChannel, answerConfirm, answerChoice, addMention, react, loadOlder,
   newAiChat, roomKey, takeDraft,
 } from './store.js';
 import { STEP, STATUS_DOT, SUGS_NEW, SUGS_PAGE, brief, statusText, timeOf, dayOf } from './format.js';
 import { useNow } from './useNow.js';
-import MyPage from './MyPage.jsx';
+import MyPage, { KeySetup } from './MyPage.jsx';
 import Downloads from './Downloads.jsx';
 import History from './History.jsx';
 
@@ -172,6 +172,7 @@ function AgentParts({ parts, taskId }) {
       case 'bot': return <div key={i} className="my-0.5"><Markdown src={it.src} /></div>;
       case 'page': return <ResultCard key={i} spec={it.spec} tabId={it.tabId} taskId={taskId} />;
       case 'confirm': return <Confirm key={i} item={it} taskId={taskId} />;
+      case 'choice': return <Choice key={i} item={it} taskId={taskId} />;
       case 'note': return <div key={i} className="my-1 rounded-lg bg-info/10 px-2.5 py-1.5 text-xs text-info">{it.text}</div>;
       case 'err': return <div key={i} className="my-1 rounded-lg bg-warn/10 px-2.5 py-1.5 text-xs text-warn">{it.text}</div>;
       default: return null;
@@ -179,8 +180,23 @@ function AgentParts({ parts, taskId }) {
   });
 }
 
+// 차례별 기록이 있는 세션 — 도구 단계는 뒤에서부터 차례 수만큼 나눠 붙인다(오래된 단계는 잘렸을 수 있다)
+function replayTurns(t) {
+  let end = t.steps.length;
+  const stepsOf = [...t.turns].reverse().map((x) => { const s = t.steps.slice(Math.max(0, end - x.n), end); end = Math.max(0, end - x.n); return s; }).reverse();
+  const items = t.turns.flatMap((x, i) => [
+    { k: 'user', text: x.text, ts: x.ts },
+    ...(stepsOf[i].length ? [{ k: 'steps', steps: stepsOf[i].map((s) => ({ ...s, state: 'ok' })), ts: x.ts }] : []),
+    ...(x.answer ? [{ k: 'bot', src: x.answer, ts: x.ended || x.ts }] : []),
+  ]);
+  for (const p of t.pages || []) items.push({ k: 'page', spec: p, tabId: t.tabId, ts: t.ended || t.started });
+  items.push({ k: 'note', text: '지난 실행의 기록입니다. 이어서 말하면 새 대화로 시작합니다.', ts: t.ended || t.started });
+  return items;
+}
+
 // 지난 실행(앱을 다시 켠 뒤)은 대화 기록이 없다 — 남은 요약·단계·결과로 보여 준다
 function replay(t) {
+  if (t.turns?.length) return replayTurns(t);
   const items = [{ k: 'user', text: t.title, ts: t.started }];
   if (t.steps.length) items.push({ k: 'steps', steps: t.steps.map((s) => ({ ...s, state: 'ok' })), ts: t.started });
   for (const p of t.pages || []) items.push({ k: 'page', spec: p, tabId: t.tabId, ts: t.ended || t.started });
@@ -402,7 +418,9 @@ function Composer({ room }) {
     ta.current.style.height = Math.min(ta.current.scrollHeight, 160) + 'px';
   }, [text]);
   const r = route(room, mentions);
-  const blocked = (r.to === 'agent' || r.to === 'agent-in-channel') && S.busy;
+  const toAgent = r.to === 'agent' || r.to === 'agent-in-channel';
+  const needKey = toAgent && !S.hasKey;              // 키 없이 보내면 글만 사라졌다 — 보내지 않고 입력칸을 보여 준다
+  const blocked = toAgent && (S.busy || needKey);
   const go = async () => {
     if (!text.trim() || blocked) return;
     const t = text;
@@ -411,6 +429,8 @@ function Composer({ room }) {
   };
   const chName = room.kind === 'channel' ? channels?.find((c) => c.id === room.id)?.name : '';
   return (
+    <>
+    {needKey && <KeySetup compact />}
     <form onSubmit={(e) => { e.preventDefault(); go(); }}
           className="relative mx-3 mb-3 shrink-0 rounded-[14px] bg-field pt-2.5 pr-2.5 pb-2 pl-3 ring-1 ring-field-line focus-within:ring-[1.5px] focus-within:ring-accent">
       {mention.picker && <div className="absolute right-0 bottom-full left-0 mb-2">{mention.picker}</div>}
@@ -433,11 +453,38 @@ function Composer({ room }) {
         </button>
       </div>
     </form>
+    </>
   );
 }
 
 // ── 패널 ─────────────────────────────────────────────────────────────
 // 사이드 패널 전체 높이를 쓰는 채팅방. headerLeft(워크스페이스 단추)·onTitle(방 바꾸기 목록 열기)은 SidePanel이 준다.
+// 객관식 — 업무 유형처럼 사람이 골라야 할 때(고르면 나머지는 흐리게)
+function Choice({ item, taskId }) {
+  return (
+    <div data-choice={item.id} className="my-1.5 rounded-xl bg-accent-soft p-3 ring-1 ring-accent/45 ring-inset">
+      <div className="mb-2 flex items-center gap-1.5 text-[13px] font-bold"><Icon name="graph" className="size-4 text-accent" />{item.title}</div>
+      <div className="flex flex-col gap-1.5">
+        {item.options.map((o, i) => {
+          const picked = item.answer === i;
+          return (
+            <button key={i} data-option={i} disabled={item.answer !== null} onClick={() => answerChoice(taskId, item.id, i)}
+                    className={`flex items-start gap-2.5 rounded-lg bg-field px-3 py-2 text-left ring-1 ring-inset transition
+                                ${picked ? 'ring-accent' : 'ring-card-line'} ${item.answer !== null && !picked ? 'opacity-45' : 'hover:ring-accent/60'}`}>
+              <span className={`mt-px grid size-5 shrink-0 place-items-center rounded-md text-[11px] font-bold ${picked ? 'bg-accent text-white' : 'bg-raise'}`}>{i + 1}</span>
+              <span className="min-w-0">
+                <span className="block text-[13px] font-semibold">{o.label}</span>
+                {o.detail && <span className="block text-xs leading-[1.45] text-card-sub">{o.detail}</span>}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+      {item.answer === -1 && <div className="mt-1.5 text-xs text-card-sub">고르지 않고 멈췄어요</div>}
+    </div>
+  );
+}
+
 export default function RoomPanel({ headerLeft = null, onTitle = null, switcherOpen = false }) {
   const S = useStore((s) => s.S);
   const room = useStore((s) => s.room);
@@ -475,7 +522,7 @@ export default function RoomPanel({ headerLeft = null, onTitle = null, switcherO
             <div className="flex items-center gap-1.5 text-[11px] text-card-faint">
               {VIEWS[room.kind] ? VIEWS[room.kind].sub
                 : room.kind === 'ai'
-                ? (task ? <><span className={`size-1.5 rounded-full ${STATUS_DOT[task.status]}`} />{statusText(task, now)}</> : 'A2A 에이전트 · Opus 5.5')
+                ? (task ? <><span className={`size-1.5 rounded-full ${STATUS_DOT[task.status]}`} />{statusText(task, now)}</> : `A2A 에이전트 · ${S?.agentModel?.label || 'Opus 5.5'}`)
                 : <><span className={`size-1.5 rounded-full ${chatStatus === 'live' ? 'bg-ok' : 'bg-faint'}`} />{ch?.topic || (chatStatus === 'live' ? '실시간' : '연결 중…')}</>}
             </div>
            </span>

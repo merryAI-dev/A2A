@@ -58,7 +58,11 @@ function RoomSwitcher({ onClose, docked = false }) {
         );
       })}
       <div className="my-2 h-px bg-card-line" />
-      <Row onClick={() => a2a.send('map:open')}><Icon name="graph" className="size-4 text-card-sub" />업무 지도</Row>
+      <Row onClick={() => a2a.send('nav:go', '홈')}><Icon name="home" className="size-4 text-card-sub" />홈</Row>
+      <Row onClick={() => a2a.send('merry:open')}><Icon name="page" className="size-4 text-card-sub" />메리</Row>
+      <Row onClick={() => a2a.send('nav:go', '접점 찾기')}><Icon name="people" className="size-4 text-card-sub" />접점 찾기</Row>
+      <Row onClick={() => a2a.send('learn:open')}><Icon name="spark" className="size-4 text-card-sub" />학습</Row>
+      <Row onClick={() => a2a.send('map:open')}><Icon name="graph" className="size-4 text-card-sub" />업무 지도 · 온톨로지</Row>
       <Row on={room.kind === 'history'} onClick={() => go(() => openRoom({ kind: 'history' }))}><Icon name="clock" className="size-4 text-card-sub" />방문 기록</Row>
       <Row on={room.kind === 'downloads'} onClick={() => go(() => openRoom({ kind: 'downloads' }))}><Icon name="download" className="size-4 text-card-sub" />다운로드</Row>
       <Row on={room.kind === 'me'} onClick={() => go(() => openRoom({ kind: 'me' }))}><Icon name="person" className="size-4 text-card-sub" />마이페이지</Row>
@@ -118,6 +122,17 @@ function WorkspaceButton() {
   );
 }
 
+// 좁은 패널에서도 늘 보이는 길 — 홈과 온톨로지
+function QuickLinks() {
+  const b = 'grid size-8 place-items-center rounded-lg text-card-sub hover:bg-raise hover:text-card-ink';
+  return (
+    <>
+      <button id="panel-home" title="홈" className={b} onClick={() => a2a.send('nav:go', '홈')}><Icon name="home" className="size-4" /></button>
+      <button id="panel-map" title="업무 지도 · 온톨로지" className={b} onClick={() => a2a.send('map:open')}><Icon name="graph" className="size-4" /></button>
+    </>
+  );
+}
+
 const DOCK_WIDTH = 600;
 function useWide() {
   const [wide, setWide] = useState(() => window.innerWidth >= DOCK_WIDTH);
@@ -135,6 +150,7 @@ export default function SidePanel() {
   const [switcher, setSwitcher] = useState(false);
   const wide = useWide();
   useEffect(() => { setSwitcher(false); }, [room.kind, room.id, wide]);
+  useEffect(() => a2a.on('room:go', (r) => (r?.kind === 'ai' && !r.id ? newAiChat() : openRoom(r))), []);
   if (!S) return <div className="grid h-screen place-items-center text-xs text-card-faint">A2A 연결 중…</div>;
   if (wide) {
     return (
@@ -156,7 +172,7 @@ export default function SidePanel() {
   }
   return (
     <div className="relative h-screen">
-      <RoomPanel headerLeft={<WorkspaceButton />} onTitle={() => setSwitcher((v) => !v)} switcherOpen={switcher} />
+      <RoomPanel headerLeft={<><WorkspaceButton /><QuickLinks /></>} onTitle={() => setSwitcher((v) => !v)} switcherOpen={switcher} />
       {switcher && <RoomSwitcher onClose={() => setSwitcher(false)} />}
       {S.pickProfile && <ProfilePicker />}
     </div>

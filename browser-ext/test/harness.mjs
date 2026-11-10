@@ -170,6 +170,10 @@ for (const t of tests) {
   if (only.length && !only.includes(t.name)) continue;
   const t0 = Date.now();
   try {
+    // 시험 중 진짜 모델이 업무 유형을 애매하다고 하면 사람을 기다리게 된다 — 첫 후보로 답한다(n5만 직접 고른다)
+    // 앞 시험의 진짜 모델 실행이 끝날 때까지 — 답이 화면에 뜬 뒤에도 썸네일·마무리로 잠시 일하는 중이다
+    for (let i = 0; i < 120; i++) { if (!(await swEval(env.cdp, 'globalThis.a2a?.busy?.() ?? false').catch(() => false))) break; await sleep(500); }
+    if (t.name !== 'n5-choice-card-roundtrip') await swEval(env.cdp, 'globalThis.a2a && (globalThis.a2a.autoChoice = () => 0); true').catch(() => {});
     const detail = await t.fn({ cdp: env.cdp, EXT, ID, Page, swEval, sleep, OUT });
     const ok = detail?.ok !== false;
     report.steps.push({ name: t.name, ok, ms: Date.now() - t0, detail });

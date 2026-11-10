@@ -19,6 +19,12 @@ const portWatchers = new Set();
 export const onPorts = (fn) => portWatchers.add(fn);
 const portsChanged = () => { for (const fn of portWatchers) { try { fn(ports.size); } catch (e) { console.error('[hub]', e); } } };
 
+// bridge.js가 base64로 감싼 파일 바이트를 되돌린다
+function unwire(v) {
+  if (!v || typeof v !== 'object' || typeof v.__bytes !== 'string') return v;
+  return Uint8Array.from(atob(v.__bytes), (c) => c.charCodeAt(0));
+}
+
 chrome.runtime.onConnect.addListener((port) => {
   if (!port.name.startsWith('ui:') || port.sender?.id !== chrome.runtime.id || !String(port.sender?.url || '').startsWith(SELF)) {
     port.disconnect();
@@ -37,7 +43,7 @@ chrome.runtime.onConnect.addListener((port) => {
       const fn = invokeHandlers.get(m.ch);
       try {
         if (!fn) throw new Error(`알 수 없는 요청: ${m.ch}`);
-        port.postMessage({ kind: 'reply', id: m.id, ok: true, value: await fn(...(m.args || []), port) });
+        port.postMessage({ kind: 'reply', id: m.id, ok: true, value: await fn(...(m.args || []).map(unwire), port) });
       } catch (e) {
         port.postMessage({ kind: 'reply', id: m.id, ok: false, error: String(e?.message || e) });
       }
