@@ -437,6 +437,10 @@ async function discoverContacts(input, onEvent = () => {}) {
     }
     if (d.patterns?.length) lines.push(`관측된 패턴: ${d.patterns.map((x) => `${x.pattern}×${x.seen}`).join(', ')}`);
     if (!d.emails.length) lines.push('(공개 페이지에서 주소를 찾지 못함)');
+    for (const c of (d.channels || []).slice(0, 20)) {
+      const why = c.method === 'linked' ? `홈페이지가 링크 — 출처 ${c.sources?.[0]?.url || ''}` : c.mentions_domain ? '계정 페이지에 회사 도메인이 적혀 있음' : '이름만 같음·이 회사 것인지 미확인';
+      lines.push(`- 채널 ${c.site}: ${c.url} [${c.method}] ${why}`);
+    }
     const text = lines.join('\n');
     collect.agentToolResult({ platform: 'a2a-engine', tool: 'find_contacts', input: body, text,
                               sourceUrl: d.base || `https://${body.domain}` });

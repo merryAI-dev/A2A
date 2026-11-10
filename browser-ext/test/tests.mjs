@@ -748,10 +748,13 @@ test('n19-contacts-fill-in-as-found-real', async ({ cdp, EXT, Page }) => {
   const c = await p.eval('window.__c');
   const rows = await p.eval("document.querySelectorAll('#contact-result .contact-row').length");
   const checking = await p.eval("document.querySelector('#contact-result').innerText.includes('확인하는 중')");
+  // 공식 채널 — 홈페이지가 링크한 계정이 출처 표시와 함께 나온다
+  const channels = await p.eval("[...document.querySelectorAll('#contact-result #contact-channels > ul .channel-row')].map((r) => r.innerText)");
   await p.shot('n19-contacts.png', { width: 1200, height: 800 });
   await p.close();
-  return { ok: !!done && c.live > 1 && c.liveRows >= 1 && c.events.includes('page') && c.events.includes('email') && rows >= 1 && !checking,
-    liveUpdates: c.live, liveRows: c.liveRows, rows, events: c.events.length };
+  return { ok: !!done && c.live > 1 && c.liveRows >= 1 && c.events.includes('page') && c.events.includes('email') && rows >= 1 && !checking
+      && c.events.includes('channel') && channels.some((t) => t.includes('인스타그램') && t.includes('홈페이지에 링크됨')),
+    channels: channels.length, liveUpdates: c.live, liveRows: c.liveRows, rows, events: c.events.length };
 });
 test('n14-every-app-page-has-home-and-map', async ({ cdp, EXT, Page }) => {
   const seen = {};

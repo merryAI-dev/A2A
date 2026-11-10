@@ -1,4 +1,4 @@
-// 접점 찾기 — 회사 도메인으로 공개 페이지의 메일을 찾는 전용 화면. 일은 엔진(/v1/contacts/discover/stream)이 한다.
+// 접점 찾기 — 회사 도메인으로 공개 페이지의 메일과 공식 채널을 찾는 전용 화면. 일은 엔진(/v1/contacts/discover/stream)이 한다.
 // 엔진이 찾는 대로 흘려보내는 진행(읽은 페이지·새로 본 주소)을 바로 보여 주고, 끝나면 검증 결과로 바꾼다.
 import '../shared/bridge.js';
 import { createRoot } from 'react-dom/client';
@@ -43,6 +43,36 @@ function Email({ e }) {
   );
 }
 
+const Channel = ({ c }) => (
+  <li className="channel-row flex flex-wrap items-baseline gap-x-2 border-b border-card-line py-2 text-[13px] last:border-0">
+    <b className="w-[92px] shrink-0 font-semibold">{c.site}</b>
+    <a href={c.url} target="_blank" rel="noreferrer" className="break-all text-info hover:underline">{c.url.replace(/^https?:\/\/(www\.)?/, '')}</a>
+    <span className="text-[11.5px] text-card-sub">
+      {c.method === 'linked' ? '홈페이지에 링크됨' : c.mentions_domain ? '계정 페이지에 회사 도메인이 적혀 있음' : '이름만 같음'}
+    </span>
+  </li>
+);
+
+// 공식 채널 — 홈페이지가 링크했거나 계정 페이지에 회사 도메인이 적힌 것만 위에, 이름만 같은 계정은 접어 둔다
+function Channels({ list }) {
+  const sure = list.filter((c) => c.method === 'linked' || c.mentions_domain);
+  const maybe = list.filter((c) => !(c.method === 'linked' || c.mentions_domain));
+  if (!list.length) return null;
+  return (
+    <div id="contact-channels" className="mt-7">
+      <h2 className="text-[13px] font-semibold">공식 채널</h2>
+      {sure.length > 0 ? <ul className="mt-1">{sure.map((c) => <Channel key={c.url} c={c} />)}</ul>
+        : <div className="mt-1 text-[12px] text-card-sub">홈페이지가 직접 링크한 계정은 찾지 못했어요.</div>}
+      {maybe.length > 0 && (
+        <details className="mt-2 text-[12px] text-card-sub">
+          <summary className="cursor-pointer select-none">이름만 같은 계정 {maybe.length}개 — 이 회사 것인지 확인이 필요해요</summary>
+          <ul className="mt-1">{maybe.map((c) => <Channel key={c.url} c={c} />)}</ul>
+        </details>
+      )}
+    </div>
+  );
+}
+
 function Contacts() {
   const [f, setF] = useState({ domain: '', company: '', person_first: '', person_last: '' });
   const [busy, setBusy] = useState(false);
@@ -56,6 +86,7 @@ function Contacts() {
       if (!l) return l;
       if (ev.type === 'page') return { ...l, pages: ev.pages, at: ev.url, step: '' };
       if (ev.type === 'email') return { ...l, emails: [...l.emails, { ...ev.email, verify: { status: 'checking' } }] };
+      if (ev.type === 'channel') return { ...l, channels: [...l.channels, ev.channel] };
       if (ev.type === 'step') return { ...l, step: ev.text };
       return l;
     });
@@ -65,7 +96,7 @@ function Contacts() {
     e.preventDefault();
     if (!f.domain.trim() || busy) return;
     run.current = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    setBusy(true); setErr(''); setOut(null); setLive({ pages: 0, at: '', step: '', emails: [] });
+    setBusy(true); setErr(''); setOut(null); setLive({ pages: 0, at: '', step: '', emails: [], channels: [] });
     try { setOut(await window.a2a.invoke('contacts:find', { ...f, run: run.current })); setLive(null); }
     catch (x) { setErr(String(x.message || x)); }      // 멈춰도 그때까지 본 주소는 화면에 남긴다
     finally { setBusy(false); }
@@ -77,7 +108,7 @@ function Contacts() {
     <div id="contacts" className="absolute inset-0 overflow-y-auto">
       <div className="mx-auto max-w-[760px] px-6 pt-10 pb-16">
         <h1 className="text-[24px] font-bold tracking-tight">접점 찾기</h1>
-        <p className="mt-1 mb-6 text-[13px] text-card-sub">회사 도메인을 넣으면 공개 페이지에서 메일 주소를 찾아 출처와 함께 보여 드려요.</p>
+        <p className="mt-1 mb-6 text-[13px] text-card-sub">회사 도메인을 넣으면 공개 페이지에서 메일 주소와 공식 채널을 찾아 출처와 함께 보여 드려요.</p>
         <form onSubmit={find} className="grid grid-cols-2 gap-2">
           <Field id="contact-domain" autoFocus className="col-span-2" placeholder="회사 도메인 (예: mysc.co.kr)" value={f.domain} onChange={set('domain')} />
           <Field placeholder="회사 이름 (선택)" className="col-span-2" value={f.company} onChange={set('company')} />
@@ -95,6 +126,7 @@ function Contacts() {
               {' '}· 주소 {live.emails.length}개
             </div>
             {found.length > 0 && <ul className="mt-3">{found.map((e) => <Email key={e.address} e={e} />)}</ul>}
+            <Channels list={live.channels} />
           </section>
         )}
         {out && (
@@ -108,6 +140,7 @@ function Contacts() {
                 <ul className="mt-1">{guessed.map((e) => <Email key={e.address} e={e} />)}</ul>
               </>
             )}
+            <Channels list={out.channels || []} />
           </section>
         )}
       </div>

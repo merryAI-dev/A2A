@@ -11,6 +11,15 @@
      (주거망은 25번이 막혀 있는 일이 많고, 캐치올 도메인은 전부 받으므로 무작위 주소로
      캐치올을 먼저 가려낸다). 확인 못 하면 못 했다고 말한다(unknown) — 조용한 단정 없음.
 
+공식 채널(2026-11-10 추가, Sherlock 방식의 축소판 — 사이트 표는 직접 만들었다): 회사 계정만 다룬다.
+개인 아이디 추적은 하지 않는다. 길은 둘이고 역시 섞지 않는다:
+  linked    = 회사 홈페이지가 직접 링크한 계정(출처 = 그 페이지).
+  same_name = 도메인 이름·링크된 계정 이름과 같은 계정이 그 사이트에 있음(상태 코드로 확인).
+              계정 페이지에 회사 도메인이 적혀 있으면 mentions_domain(그 대목이 출처). 아니면
+              이름만 같은 것이라 이 회사 것이라는 보장이 없다 — 화면도 그렇게 말한다. 없는 계정에 404를 주는
+              사이트만 찔러 본다(실측 2026-11-10). 인스타그램·페이스북·링크드인은 없는 계정에도
+              200을 줘서 찔러 보지 않는다.
+
 바깥 요청은 전부 netguard(SSRF 가드) 클라이언트로 나간다. 시험은 client를 주입한다.
 """
 import os
@@ -20,6 +29,7 @@ import smtplib
 import socket
 import time
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urljoin, urlsplit
 from urllib.robotparser import RobotFileParser
 
@@ -115,6 +125,104 @@ def _emails_in(html: str, page_url: str) -> list[dict]:
         out.append({"address": addr.lower(), "url": page_url,
                     "quote": quote(m.start(), m.group(0)), "obfuscated": True})
     return out
+
+
+# ── 공식 채널 ─────────────────────────────────────────────────────────
+# (키, 이름, 호스트, 계정 경로, 같은 이름 확인용 주소 또는 None)
+CHANNELS = [
+    ("linkedin", "링크드인", r"(^|\.)linkedin\.com$", r"^/((?:company|school|showcase)/[^/?#]+)", None),
+    ("instagram", "인스타그램", r"(^|\.)instagram\.com$", r"^/([A-Za-z0-9_.]+)/?$", None),
+    ("facebook", "페이스북", r"(^|\.)(facebook|fb)\.com$", r"^/([A-Za-z0-9.\-]+)/?$", None),
+    ("youtube", "유튜브", r"(^|\.)youtube\.com$", r"^/(@[^/?#]+|(?:channel|c|user)/[^/?#]+)", "https://www.youtube.com/@{}"),
+    ("x", "X", r"(^|\.)(x|twitter)\.com$", r"^/([A-Za-z0-9_]{1,15})/?$", "https://x.com/{}"),
+    ("naverblog", "네이버 블로그", r"^(m\.)?blog\.naver\.com$", r"^/([A-Za-z0-9_\-]+)/?$", "https://blog.naver.com/{}"),
+    ("tistory", "티스토리", r"^([a-z0-9\-]+)\.tistory\.com$", None, "https://{}.tistory.com/"),
+    ("brunch", "브런치", r"^brunch\.co\.kr$", r"^/(@[^/?#]+)", "https://brunch.co.kr/@{}"),
+    ("github", "깃허브", r"^github\.com$", r"^/([A-Za-z0-9\-]+)/?$", "https://github.com/{}"),
+    ("huggingface", "허깅페이스", r"^huggingface\.co$", r"^/([A-Za-z0-9\-_.]+)/?$", "https://huggingface.co/{}"),
+    ("kakao", "카카오톡 채널", r"^pf\.kakao\.com$", r"^/(_[A-Za-z0-9]+)", None),
+    ("threads", "스레드", r"(^|\.)threads\.(net|com)$", r"^/(@[^/?#]+)", None),
+    ("tiktok", "틱톡", r"(^|\.)tiktok\.com$", r"^/(@[^/?#]+)", None),
+    ("medium", "미디엄", r"^medium\.com$", r"^/(@[^/?#]+)", None),
+    ("telegram", "텔레그램", r"^t\.me$", r"^/([A-Za-z0-9_]{4,})/?$", None),
+]
+CHANNELS = [(k, n, re.compile(h, re.I), re.compile(p) if p else None, t) for k, n, h, p, t in CHANNELS]
+# 계정이 아니라 사이트 기능인 경로 — 공유 버튼·로그인 따위
+NOT_A_HANDLE = {"share", "sharer", "sharer.php", "intent", "home", "login", "signup", "explore", "search",
+                "hashtag", "p", "reel", "watch", "about", "features", "pricing", "policies", "privacy",
+                "terms", "help", "i", "tr", "dialog", "plugins", "docs", "join", "models", "datasets",
+                "spaces", "blog", "www", "notice", "profile.php", "tos", "legal", "settings", "topics"}
+HANDLE_OK = re.compile(r"^[a-z0-9][a-z0-9_\-]{2,29}$")
+PROBE_BUDGET = 4.0          # 같은 이름 확인 전체에 쓰는 시간 상한(초)
+
+
+def _channels_in(html: str, page_url: str) -> list[dict]:
+    """페이지가 링크한 회사 계정들 — 출처는 그 페이지와 링크 글자."""
+    out = []
+    for a in BeautifulSoup(html, "html.parser").find_all("a", href=True):
+        parts = urlsplit(a["href"].strip())
+        host = (parts.hostname or "").lower().removeprefix("www.")
+        if parts.scheme not in ("http", "https") or not host:
+            continue
+        for key, name, host_rx, path_rx, _ in CHANNELS:
+            hm = host_rx.search(host)
+            if not hm:
+                continue
+            m = path_rx.search(parts.path) if path_rx else hm
+            handle = m.group(1) if m else ""
+            if handle and handle.lower() not in NOT_A_HANDLE:
+                label = a.get_text(" ", strip=True) or a.get("aria-label") or a.get("title") or ""
+                path = m.group(0).rstrip("/") if path_rx else ""
+                out.append({"key": key, "site": name, "handle": handle, "method": "linked",
+                            "url": f"https://{parts.hostname}{path}",
+                            "sources": [{"url": page_url, "quote": label[:200]}]})
+            break
+    return out
+
+
+def _account_page(client: httpx.Client, url: str, root: str, name: str = "") -> "dict | None":
+    """그 주소에 계정이 있으면 {url, quote} — quote는 계정 페이지가 회사 도메인을 적은 대목(없으면 "").
+
+    없거나(404) 모르면(차단·시간 초과) None. 모르는 것을 있다고 하지 않는다.
+    """
+    try:
+        r = netguard.get(client, url, total_timeout=PROBE_BUDGET, max_bytes=MAX_BYTES)
+    except httpx.HTTPError:
+        return None
+    # 없는 계정을 로그인·첫 화면으로 돌려보내는 사이트가 있다 — 끝난 주소에 그 이름이 남아 있어야 계정이다
+    if r.status_code != 200 or name.lower() not in str(r.url).lower():
+        return None
+    at = r.text.lower().find(root)
+    # 계정 페이지 원문은 스크립트·속성투성이라 인용하지 않는다 — 무엇을 확인했는지만 적는다
+    quote = f"계정 페이지에 {root} 주소가 적혀 있음" if at >= 0 else ""
+    return {"url": str(r.url), "quote": quote[:200]}
+
+
+def _same_name_channels(client, names: "list[str]", have: "set[str]", root: str, budget: float) -> list[dict]:
+    """홈페이지가 링크하지 않은 사이트에서 같은 이름의 계정을 찾는다 — 사이트마다 앞선 이름이 먼저.
+
+    계정 페이지에 회사 도메인이 적혀 있으면 mentions_domain=True(그 대목이 출처) — 이름만 같은 것과 구분한다.
+    """
+    jobs = [(key, site, n, tmpl.format(n)) for key, site, _, _, tmpl in CHANNELS
+            if tmpl and key not in have for n in names]
+    if not jobs or budget <= 0:
+        return []
+    pool = ThreadPoolExecutor(max_workers=8)
+    futures = [pool.submit(_account_page, client, url, root, name) for _, _, name, url in jobs]
+    t_end = time.monotonic() + budget
+    out, seen = [], set()
+    for (key, site, name, url), fut in zip(jobs, futures):
+        try:
+            page = fut.result(timeout=max(0.0, t_end - time.monotonic()))
+        except Exception:  # noqa: BLE001 — 시간 안에 못 본 것은 '모름' — 결과에 올리지 않는다
+            page = None
+        if page and key not in seen:
+            seen.add(key)
+            out.append({"key": key, "site": site, "handle": name, "method": "same_name",
+                        "url": page["url"].rstrip("/"), "mentions_domain": bool(page["quote"]),
+                        "sources": [{"url": page["url"], "quote": page["quote"]}] if page["quote"] else []})
+    pool.shutdown(wait=False, cancel_futures=True)
+    return sorted(out, key=lambda c: not c["mentions_domain"])
 
 
 def _score(label: str) -> int:
@@ -266,11 +374,14 @@ def discover(domain: str, person: "dict | None" = None, *,
              smtp_check: "bool | None" = None,
              mx_lookup: bool = True,
              assume_root: "str | None" = None,
+             probe_channels: "bool | None" = None,
              on_event=None) -> dict:
     """assume_root: 시험용 — 가짜 서버(127.0.0.1)로 긁되 회사 도메인 판정은 이 값으로.
 
+    probe_channels: 같은 이름 계정 확인(바깥 사이트 요청). 기본은 실제 경로(자기 클라이언트)에서만.
+
     on_event(dict): 진행을 한 걸음씩 알린다 — 읽은 페이지(page), 새로 본 주소(email),
-    단계(step). 화면이 끝까지 기다리지 않고 찾는 대로 보여 주게 하려는 것. 결과는 그대로 반환한다.
+    링크된 계정(channel), 단계(step). 화면이 끝까지 기다리지 않고 찾는 대로 보여 주게 하려는 것. 결과는 그대로 반환한다.
     """
     emit = on_event or (lambda ev: None)
     base = _norm_base(domain)
@@ -280,9 +391,12 @@ def discover(domain: str, person: "dict | None" = None, *,
         TIMEOUT, headers={"User-Agent": "Mozilla/5.0 (Macintosh) A2A-Engine/0.1"})
     if smtp_check is None:
         smtp_check = os.environ.get("CONTACTS_SMTP_CHECK") == "1"
+    if probe_channels is None:
+        probe_channels = own
 
     pages, found, errors = [], [], []
     announced: set[str] = set()
+    channels: dict[tuple, dict] = {}
 
     def took(url, html):
         """페이지 하나를 읽었다 — 기록하고, 처음 보는 주소는 바로 알린다."""
@@ -294,6 +408,11 @@ def discover(domain: str, person: "dict | None" = None, *,
             if h["address"] not in announced:
                 announced.add(h["address"])
                 emit({"type": "email", "email": _entry(h, root)})
+        for ch in _channels_in(html, url):
+            k = (ch["key"], ch["handle"].lower())
+            if k not in channels:
+                channels[k] = ch
+                emit({"type": "channel", "channel": ch})
     retried_www = False
     skipped_robots = 0
     t_end = time.monotonic() + DEADLINE
@@ -349,6 +468,16 @@ def discover(domain: str, person: "dict | None" = None, *,
             retried_www = True
             base = f"{urlsplit(base).scheme}://www.{urlsplit(base).netloc}"
             crawl(base)
+        if probe_channels and pages:
+            # 찔러 볼 이름: 도메인 이름 먼저, 그다음 홈페이지가 링크한 계정 이름(둘까지)
+            names = [root.split(".")[0]] + [c["handle"].lstrip("@").lower() for c in channels.values()]
+            names = list(dict.fromkeys(n for n in names if HANDLE_OK.match(n)))[:2]
+            if names:
+                emit({"type": "step", "text": "같은 이름의 계정이 있는지 확인하는 중…"})
+            for ch in _same_name_channels(client, names, {k for k, _ in channels}, root,
+                                          min(PROBE_BUDGET, t_end - time.monotonic())):
+                channels[(ch["key"], ch["handle"])] = ch
+                emit({"type": "channel", "channel": ch})
     finally:
         if own:
             client.close()
@@ -393,6 +522,7 @@ def discover(domain: str, person: "dict | None" = None, *,
 
     return {"domain": root, "base": base, "pages": pages, "errors": errors,
             "retried_www": retried_www, "skipped_robots": skipped_robots,
-            "emails": results, "patterns": patterns,
+            "emails": results, "patterns": patterns, "channels": list(channels.values()),
             "smtp_check": smtp_check,
-            "note": "found=페이지에서 실제로 본 주소(출처 포함) · pattern=이름+패턴 추측 — 섞지 말 것"}
+            "note": "found=페이지에서 실제로 본 주소(출처 포함) · pattern=이름+패턴 추측 — 섞지 말 것 · "
+                    "채널: linked=홈페이지가 링크한 계정 · same_name=이름만 같은 계정(이 회사 것인지 미확인)"}

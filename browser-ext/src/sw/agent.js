@@ -106,7 +106,7 @@ const TOOLS = [
       facts: { type: 'array', items: { type: 'object' } }, blanks: { type: 'array', items: { type: 'string' } },
       tone: { type: 'string' }, length: { type: 'string' },
     }, ['kind', 'audience', 'goal', 'facts']) },
-  { name: 'find_contacts', description: '회사 도메인을 주면 엔진이 그 회사의 공개 페이지 최대 12장(메뉴·sitemap·문의/소개/제휴류)을 직접 읽어 법인 메일을 발굴·검증한다(출처 포함). 지금 열린 탭과 무관하고, 먼저 사이트를 열 필요가 없다. 같은 도메인을 다시 불러도 결과는 같다. '
+  { name: 'find_contacts', description: '회사 도메인을 주면 엔진이 그 회사의 공개 페이지 최대 12장(메뉴·sitemap·문의/소개/제휴류)을 직접 읽어 법인 메일을 발굴·검증하고(출처 포함), 그 회사의 공식 채널(SNS·블로그 계정)도 함께 찾는다 — 채널은 linked(홈페이지가 링크함)만 공식으로 말하고, same_name은 이름만 같은 계정이라 확인이 필요하다고 전할 것. 지금 열린 탭과 무관하고, 먼저 사이트를 열 필요가 없다. 같은 도메인을 다시 불러도 결과는 같다. '
       + 'found=페이지에서 실제로 본 주소, pattern=이름+패턴 추측 — 둘을 섞어 말하지 말 것. 사람 이름(로마자)을 알면 person_first/person_last를 준다.',
     input_schema: S({ domain: { type: 'string' }, company: { type: 'string' },
                       person_first: { type: 'string' }, person_last: { type: 'string' } }, ['domain']) },

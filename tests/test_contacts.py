@@ -16,7 +16,11 @@ SITE = {
     "/": """<html><body>
       <a href="/contact">문의하기</a> <a href="/about">회사소개</a>
       <a href="/blog">블로그</a> <a href="https://other.example.net/x">밖</a>
-      <footer>대표문의 info@acme-robots.kr</footer></body></html>""",
+      <footer>대표문의 info@acme-robots.kr
+        <a href="https://www.instagram.com/acme_robots/">인스타그램</a>
+        <a href="https://www.youtube.com/@acmerobots/featured" aria-label="유튜브 채널"></a>
+        <a href="https://www.facebook.com/sharer/sharer.php?u=x">공유</a>
+        <a href="https://twitter.com/intent/tweet?text=x">트윗</a></footer></body></html>""",
     "/contact": """<html><body>
       영업: jane.doe@acme-robots.kr (제휴·구매)
       채용 문의는 recruit@acme-robots.kr
@@ -185,3 +189,41 @@ def test_quote_is_readable_text_not_markup():
     assert hits["info@acme-robots.kr"] == "문의 info@acme-robots.kr 메일 보내기"
     assert "hidden@acme-robots.kr" in hits["hidden@acme-robots.kr"]
     assert not any("<" in q or "class=" in q or "height" in q for q in hits.values())
+
+
+def test_channels_linked_from_the_site_carry_their_source(site, no_dns):
+    events = []
+    out = finder.discover(site, client=httpx.Client(), assume_root="acme-robots.kr", on_event=events.append)
+    got = {c["key"]: c for c in out["channels"]}
+    assert set(got) == {"instagram", "youtube"}              # 공유·트윗 버튼은 계정이 아니다
+    assert got["instagram"]["url"] == "https://www.instagram.com/acme_robots"
+    assert got["youtube"]["url"] == "https://www.youtube.com/@acmerobots"
+    assert got["youtube"]["sources"][0]["quote"] == "유튜브 채널"
+    assert all(c["method"] == "linked" and c["sources"][0]["url"] == site for c in got.values())
+    assert [e["channel"]["key"] for e in events if e["type"] == "channel"] == ["instagram", "youtube"]
+
+
+def test_same_name_accounts_are_kept_apart_from_linked_ones(site, no_dns, monkeypatch):
+    asked = []
+
+    def page(client, url, root, name=""):
+        asked.append(url)
+        if "github.com" in url:
+            return {"url": url, "quote": f"계정 페이지에 {root} 주소가 적혀 있음"}
+        return {"url": url, "quote": ""} if "tistory" in url else None
+
+    monkeypatch.setattr(finder, "_account_page", page)
+    out = finder.discover(site, client=httpx.Client(), assume_root="acme-robots.kr", probe_channels=True)
+    same = [c for c in out["channels"] if c["method"] == "same_name"]
+    assert [(c["key"], c["mentions_domain"]) for c in same] == [("github", True), ("tistory", False)]
+    assert same[0]["sources"] and not same[1]["sources"]     # 도메인이 적힌 계정만 출처가 있다
+    assert not any("youtube.com" in u for u in asked)        # 홈페이지가 이미 링크한 곳은 찔러 보지 않는다
+    assert any(u == "https://github.com/acme-robots" for u in asked)
+
+
+def test_account_that_redirects_away_is_not_an_account(monkeypatch):
+    def get(client, url, **kw):
+        return httpx.Response(200, text="로그인", request=httpx.Request("GET", "https://brunch.co.kr/?signin"))
+
+    monkeypatch.setattr(finder.netguard, "get", get)
+    assert finder._account_page(None, "https://brunch.co.kr/@acme", "acme.kr", "acme") is None
