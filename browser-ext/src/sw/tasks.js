@@ -104,10 +104,9 @@ async function activeTabId() {
   if (url.startsWith(`chrome-extension://${chrome.runtime.id}/`) && !url.endsWith('/newtab.html')) return null;
   return t?.id ?? null;
 }
-// 결과 페이지 탭 — 명세는 agent.js가 모양을 검사한 것만 온다. 브라우저와 같은 톤으로(어두운 배경화면이면 어둡게)
+// 결과 페이지 탭 — 명세는 agent.js가 모양을 검사한 것만 온다. 톤은 다른 화면과 같이 늘 밝다
 async function openPage(spec) {
-  const tone = ['dusk', 'graphite'].includes(store.wallpaper) ? 'dark' : 'light';
-  const bytes = new TextEncoder().encode(JSON.stringify({ spec, tone }));
+  const bytes = new TextEncoder().encode(JSON.stringify({ spec }));
   let bin = '';
   for (const b of bytes) bin += String.fromCharCode(b);
   const hash = btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');

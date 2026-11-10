@@ -13,7 +13,7 @@ index 8f563d16be..275e947a8a 100644
    registry->RegisterIntegerPref(
        prefs::kBrowserColorVariant,
 diff --git a/chrome/browser/ui/color/chrome_color_mixers.cc b/chrome/browser/ui/color/chrome_color_mixers.cc
-index 721cb586c2..f5404ac0e3 100644
+index 721cb586c2..a8a9ddc313 100644
 --- a/chrome/browser/ui/color/chrome_color_mixers.cc
 +++ b/chrome/browser/ui/color/chrome_color_mixers.cc
 @@ -8,7 +8,9 @@
@@ -39,7 +39,7 @@ index 721cb586c2..f5404ac0e3 100644
  
  namespace {
  
-@@ -43,6 +50,34 @@ bool ChromeColorProviderUtilsCallbacks::ColorIdToCSSColorId(
+@@ -43,6 +50,36 @@ bool ChromeColorProviderUtilsCallbacks::ColorIdToCSSColorId(
    return false;
  }
  
@@ -54,7 +54,9 @@ index 721cb586c2..f5404ac0e3 100644
 +  mixer[ui::kColorFrameActive] = {kA2ARaise};
 +  mixer[ui::kColorFrameInactive] = {kA2ARaise};
 +  mixer[kColorToolbar] = {kA2ARaise};
-+  mixer[kColorToolbarContentAreaSeparator] = {kA2ACardLine};
++  // No hairline between the frame and the page: the two differ by tone only.
++  mixer[kColorToolbarContentAreaSeparator] = {kA2ARaise};
++  mixer[kColorSidePanelContentAreaSeparator] = {kA2ARaise};
 +  mixer[kColorToolbarButtonIcon] = {kA2ACardSub};
 +  mixer[kColorToolbarButtonIconInactive] = {kA2ACardSub};
 +  mixer[kColorLocationBarBackground] = {kA2AField};
@@ -74,7 +76,7 @@ index 721cb586c2..f5404ac0e3 100644
  }  // namespace
  
  void AddChromeColorMixers(ui::ColorProvider* provider,
-@@ -65,6 +100,7 @@ void AddChromeColorMixers(ui::ColorProvider* provider,
+@@ -65,6 +102,7 @@ void AddChromeColorMixers(ui::ColorProvider* provider,
  
    // Must be the last one in order to override other mixer colors.
    AddNativeChromeColorMixer(provider, key);

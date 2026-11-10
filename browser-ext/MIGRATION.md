@@ -23,6 +23,16 @@
 | 이벤트 수집(events.js)·업무 지도(ontology.js)·하네스(harness.js)·업무 유형·SSoT | **옮김 → 서비스 워커(sw/knowledge.js) + 업무 지도 페이지(map.html)** | browser/ 모듈을 그대로 번들, Node API는 src/shim/(IndexedDB) |
 | Claude API 키 | 개발용: `chrome.storage.local` · 운영: 엔진 프록시 | Electron 때와 같은 한계(앱에 키) |
 
+## 누가 무엇을 맡나 (한 가지는 한 곳에만)
+| 무엇 | 맡는 곳 | 두지 않는 곳 |
+|---|---|---|
+| 탭·홈 단추·주소창 | Chromium 틀(C++ — 세로 탭 줄) | 페이지 안 사이드바, 툴바의 두 번째 홈 단추 |
+| 앱 이동(홈·메리·접점 찾기·학습·업무 지도) | 페이지 맨 위 메뉴(`ui/AppNav.jsx`) — 홈·결과 페이지 포함 모든 우리 화면 | 홈 사이드바, 옆 패널 |
+| AI 채팅·팀 채널·방문 기록·다운로드·마이페이지 | 옆 패널(`ui/SidePanel.jsx`) | 홈 |
+| 색 | `browser/renderer/src/tokens.css` 하나 — 앱 화면·결과 페이지·틀(C++, `chromium/gen_colors.mjs`)이 함께 읽는다 | 화면별 색 정의 |
+
+틀(탭 줄·툴바·맨 위 메뉴)은 같은 면(`raise`)으로 이어지고 그 사이에 선을 긋지 않는다. 페이지 내용은 그 위에 얹힌 밝은 종이(`card`)다.
+
 ## 구조
 ```
 browser-ext/

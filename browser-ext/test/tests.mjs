@@ -712,9 +712,10 @@ test('n15-home-button-returns-from-app', async ({ cdp, EXT, Page, swEval, sleep 
   await p.close().catch(() => {});
   return { ok: urls.some((u) => u.startsWith('chrome://newtab') || u.endsWith('/newtab.html')) && !urls.some((u) => u.endsWith('/merry.html')), urls };
 });
-test('n16-home-sidebar-lists-apps', async ({ cdp, Page }) => {
+test('n16-home-uses-the-shared-app-menu', async ({ cdp, Page }) => {
+  // 홈에도 같은 맨 위 메뉴 하나 — 앱 목록을 사이드바에 또 두지 않는다
   const p = await Page.open(cdp, 'chrome://newtab/');
-  const ok = await p.waitFor("!!document.querySelector('#ask') && ['merry','contacts','learn','map'].every((a) => document.querySelector(`#home-sidebar [data-app=${a}]`))", 6000).catch(() => null);
+  const ok = await p.waitFor("!!document.querySelector('#ask') && ['merry','contacts','learn','map'].every((a) => document.querySelectorAll(`[data-app=${a}]`).length === 1) && !document.querySelector('#home-sidebar')", 6000).catch(() => null);
   await p.close();
   return { ok: !!ok };
 });

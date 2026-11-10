@@ -1,0 +1,54 @@
+/* 색·글꼴 토큰의 원본 — 앱 화면(index.css), 결과 페이지(page.css), 브라우저 틀(chromium/gen_colors.mjs)이 모두 여기서 읽는다.
+   톤은 data-tone을 단 상자 안에서 바뀐다(밝은 틀 안에 어두운 배경화면 칸을 둘 수 있게). */
+@theme inline {
+  --color-ink: var(--ink);
+  --color-sub: var(--sub);
+  --color-faint: var(--faint);
+  --color-glass: var(--glass);
+  --color-glass-line: var(--glass-line);
+  --color-hover: var(--hover);
+  --color-sel: var(--sel);
+  --color-card: var(--card);
+  --color-card-ink: var(--card-ink);
+  --color-card-sub: var(--card-sub);
+  --color-card-faint: var(--card-faint);
+  --color-card-line: var(--card-line);
+  --color-field: var(--field);
+  --color-field-line: var(--field-line);
+  --color-raise: var(--raise);
+  --color-accent: var(--brand);
+  --shadow-card: var(--shadow);
+  --shadow-sel: var(--sel-shadow);
+}
+@theme {
+  --color-accent-soft: rgb(255 107 69 / 0.12);
+  --color-ok: #21a366;
+  --color-warn: #c98412;
+  --color-info: #3d6fe0;
+  --font-sans: -apple-system, BlinkMacSystemFont, "Pretendard", "Apple SD Gothic Neo", system-ui, sans-serif;
+  --font-mono: "SF Mono", ui-monospace, Menlo, monospace;
+  --animate-twinkle: twinkle 1.6s ease-in-out infinite;
+  --animate-breathe: breathe 1.4s ease-in-out infinite;
+  @keyframes twinkle { 50% { transform: scale(.8) rotate(12deg); opacity: .6 } }
+  @keyframes breathe { 50% { opacity: .45 } }
+}
+
+:root { --brand:#ff6b45; }
+[data-tone="light"] {
+  --ink:#16202b; --sub:#4f5b69; --faint:#7c8795;
+  --glass:rgb(255 255 255 / .34); --glass-line:rgb(255 255 255 / .55);
+  --hover:rgb(255 255 255 / .42); --sel:rgb(255 255 255 / .86);
+  --sel-shadow:0 1px 2px rgb(16 32 48 / .08),0 2px 8px rgb(16 32 48 / .06);
+  --card:#fbfcfd; --card-ink:#151b23; --card-sub:#5e6977; --card-faint:#8c96a3; --card-line:#e7ebef;
+  --field:#fff; --field-line:#e2e7ec; --raise:#f2f5f7;
+  --shadow:0 1px 1px rgb(14 30 48 / .05),0 14px 44px rgb(14 30 48 / .16);
+}
+[data-tone="dark"] {
+  --ink:#eef1f5; --sub:#b2bac5; --faint:#808a97;
+  --glass:rgb(16 18 24 / .32); --glass-line:rgb(255 255 255 / .08);
+  --hover:rgb(255 255 255 / .08); --sel:rgb(255 255 255 / .15);
+  --sel-shadow:0 1px 0 rgb(255 255 255 / .06) inset;
+  --card:#15181d; --card-ink:#eceff3; --card-sub:#a3acb8; --card-faint:#737d8a; --card-line:#262b33;
+  --field:#1c2026; --field-line:#2c323b; --raise:#1f242b;
+  --shadow:0 1px 0 rgb(255 255 255 / .04) inset,0 18px 50px rgb(0 0 0 / .45);
+}

@@ -224,15 +224,15 @@ function toMarkdown(spec) {
 export default function PageApp({ spec }) {
   const [copied, setCopied] = useState(false);
   if (!spec) {
-    return <div className="text-muted-foreground grid h-screen place-items-center text-sm">결과 페이지를 읽지 못했습니다.</div>;
+    return <div className="text-muted-foreground grid h-full place-items-center text-sm">결과 페이지를 읽지 못했습니다.</div>;
   }
   document.title = spec.title;
   return (
-    <div className="min-h-screen">
-      <header className="border-b bg-card/70 backdrop-blur supports-[backdrop-filter]:bg-card/60">
+    <div className="min-h-full">
+      <header className="border-b bg-field/60">
         <div className="mx-auto flex max-w-6xl flex-col gap-4 px-8 pt-10 pb-8">
           <div className="flex items-center gap-2">
-            <Badge variant="outline" className="gap-1 border-brand/30 bg-brand/10 text-brand"><Sparkles />A2A 에이전트 결과</Badge>
+            <Badge variant="outline" className="gap-1 border-accent/30 bg-accent/10 text-accent"><Sparkles />A2A 에이전트 결과</Badge>
             <span className="text-muted-foreground text-xs">{new Date().toLocaleString('ko-KR', { dateStyle: 'medium', timeStyle: 'short' })}</span>
           </div>
           <div className="flex flex-wrap items-end justify-between gap-4">
