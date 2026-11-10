@@ -50,3 +50,4 @@ tests/test_variance.py
 tests/test_vision_claude.py
 tests/test_why_now.py
 tests/test_workspace_unify.py
+tests/test_llm_proxy.py
