@@ -694,6 +694,39 @@ test('n13-session-shows-every-turn-after-restart', async ({ cdp, EXT, Page, swEv
   const order = ['세션복원시험', '첫번째답', '두번째입력', '두번째답'].map((s) => text.lastIndexOf(s));
   return { ok: order.every((n, i) => n >= 0 && (i === 0 || n > order[i - 1])), order };
 });
+// 실제 모델 — 메리가 섹션을 한 부분씩 써서 쓰는 동안 종이가 채워지고, 끝까지 가서 저장되는지
+test('n18-merry-writes-in-parts-real', async ({ cdp, EXT, Page, sleep }) => {
+  const p = await Page.open(cdp, `${EXT}/merry.html`);
+  await p.waitFor('!!window.a2a');
+  const id = await p.eval(`(async () => {
+    const d = await window.a2a.invoke('invest:call', 'create', { company: '나눠쓰기시험' });
+    const memo = '나눠쓰기시험(주)는 2023년 설립된 수산 부산물 업사이클링 기업임. 2025년 매출 12억원, 영업손실 3억원. 임직원 14명. 대표는 수산 가공 15년 경력. 주요 리스크는 원료 수급 변동과 단일 거래처 매출 비중 60%임.';
+    const src = await window.a2a.invoke('invest:call', 'attachBytes', d.id, 'memo.txt', new TextEncoder().encode(memo));
+    window.__m = { drafts: 0, lens: [], steps: [], asks: 0, idle: 0 };
+    window.a2a.on('invest:progress', (e) => {
+      if (e.dealId !== d.id) return;
+      if (e.type === 'draft' && e.html) { window.__m.drafts++; window.__m.lens.push(e.html.length); }
+      if (e.type === 'step' && e.text) window.__m.steps.push(e.text);
+      if (e.type === 'ask') { window.__m.asks++; window.a2a.invoke('invest:call', 'answer', d.id, e.msgId, { skip: true }); }
+      if (e.type === 'idle') window.__m.idle++;
+    });
+    await window.a2a.invoke('invest:call', 'readAttached', d.id, [src.id]);
+    return d.id;
+  })()`);
+  await p.waitFor('window.__m.idle >= 1', 240000);                       // 자료 읽기 끝
+  await p.eval(`window.a2a.invoke('invest:call', 'write', ${JSON.stringify(id)}, 'conclusion')`);
+  await p.waitFor('window.__m.idle >= 2', 900000).catch(() => null);     // 쓰기 끝(또는 멈춤)
+  await sleep(500);
+  const m = await p.eval('window.__m');
+  const view = await p.eval(`window.a2a.invoke('invest:call', 'deal', ${JSON.stringify(id)})`);
+  const sec = view.sections?.conclusion || view.deal?.sections?.conclusion;
+  const err = (view.chat || view.deal?.chat || []).filter((x) => x.data?.error).map((x) => x.text);
+  await p.shot('n18-merry-parts.png', { width: 1400, height: 900 });
+  await p.close();
+  const parts = m.steps.filter((t) => /\d+\/\d+ — /.test(t)).length;
+  return { ok: !!sec && sec.status !== 'draft' && sec.html.length > 200 && parts >= 2 && m.drafts > parts && !err.length,
+    status: sec?.status, chars: sec?.html?.length, parts, drafts: m.drafts, asks: m.asks, err, steps: m.steps.slice(0, 12) };
+});
 test('n14-every-app-page-has-home-and-map', async ({ cdp, EXT, Page }) => {
   const seen = {};
   for (const page of ['merry', 'contacts', 'learn', 'map']) {
@@ -704,6 +737,8 @@ test('n14-every-app-page-has-home-and-map', async ({ cdp, EXT, Page }) => {
   return { ok: Object.values(seen).every(Boolean), seen };
 });
 test('n15-home-button-returns-from-app', async ({ cdp, EXT, Page, swEval, sleep }) => {
+  const stale = await swEval(cdp, "chrome.tabs.query({}).then((x) => x.filter((t) => (t.url || '').endsWith('/merry.html')).map((t) => t.id))");
+  if (stale.length) await swEval(cdp, `chrome.tabs.remove(${JSON.stringify(stale)})`);   // 앞선 시험이 남긴 메리 탭
   const p = await Page.open(cdp, `${EXT}/merry.html`);
   await p.waitFor("!!document.querySelector('#nav-home')");
   await p.eval("document.querySelector('#nav-home').click()");

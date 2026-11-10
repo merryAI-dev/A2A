@@ -158,23 +158,35 @@ function createCopilot({ room, pipe, frn = null, bridge = null, typeDeal = () =>
       const cx = room.latestCompute(dealId);
       stepMsg(dealId, `${s.title} — 근거 ${d.facts.length}개, 유효한 결정 ${d.decisions.filter((x) => !x.supersededBy).length}개${cx ? `, 계산 변수 ${Object.keys(cx.vars).length}개` : ', 가정이 아직 잠기지 않음'}로 시작합니다`, key);
       if (!d.facts.length) say(dealId, '아직 읽은 자료가 없어요. IR·재무제표를 첨부해 주시면 근거를 뽑아 쓰겠습니다. 지금은 뼈대만 쓰고 숫자 칸은 [확인 필요]로 남길게요.', { section: key });
-      const b = await pipe.brief(dealId, key, { onThought: thought(dealId) });
-      stopped(st);
-      say(dealId, `이렇게 쓰려고 해요.\n${b.outline.map((x, i) => `${i + 1}. ${x}`).join('\n')}${b.note ? `\n\n${b.note}` : ''}`, { section: key });
-      for (const q of b.questions) {
+      // 쓰다 멈춘 섹션이면 구성을 다시 잡지 않고 다음 부분부터 잇는다
+      const prev = pipe.resumable(d.sections[key]);
+      let b;
+      if (prev) {
+        b = { outline: prev.progress.outline, questions: [], note: '' };
+        say(dealId, `지난번에 ${prev.progress.done}/${b.outline.length}까지 썼어요. 다음 부분부터 이어서 쓸게요.`, { section: key });
+      } else {
+        b = await pipe.brief(dealId, key, { onThought: thought(dealId) });
+        stopped(st);
+        say(dealId, `이렇게 쓰려고 해요. 한 부분씩 써서 바로 종이에 올리고, 여쭤볼 것은 그 부분을 쓰기 직전에 물을게요.\n${b.outline.map((x, i) => `${i + 1}. ${x}`).join('\n')}${b.note ? `\n\n${b.note}` : ''}`, { section: key });
+      }
+      // 질문은 그 답이 필요한 부분을 쓰기 직전에 — 그 앞부분은 기다리지 않고 먼저 종이에 올라간다
+      const partOf = (q) => Math.min(Math.max((Number(q.part) || 1) - 1, 0), Math.max(b.outline.length - 1, 0));
+      const askOne = async (q) => {
         const v = await ask(dealId, { text: q.text, options: q.options?.length ? q.options : null, section: key, why: q.why });
         stopped(st);
-        // 판단 질문에 고른 답은 결정으로 — 업무 지도에 "누가 무엇을 근거로 정했나"로 남는다
-        // 선택지를 고른 답만 결정(탐색 단계)으로. 직접 쓴 말은 답으로만 — 지시면 따로 처리
+        // 선택지를 고른 답만 결정(탐색 단계)으로 — 업무 지도에 "누가 무엇을 근거로 정했나"로 남는다. 직접 쓴 말은 답으로만
         if (v && q.options?.includes(v)) {
           const qid = lastAsked.get(dealId);
-          try { room.decide(dealId, { topic: short(q.text, 120), chosen: v, rationale: `${s.title} 작성 중 메리 질문에 대한 심사역 판단${q.why ? ` — ${q.why}` : ''}`, evidence: qid ? [qid] : [], resolves: qid ? [qid] : [], section: key }); } catch (e) { stepMsg(dealId, `결정 기록 실패: ${short(e.message, 100)}`); }
+          try { room.decide(dealId, { topic: short(q.text, 120), chosen: v, rationale: `${s.title} 작성 중 메리 질문에 대한 심사역 판단${q.why ? ` — ${q.why}` : ''}`, evidence: qid ? [qid] : [], resolves: qid ? [qid] : [], section: key }); } catch (e) { stepMsg(dealId, `결정 기록 실패: ${short(e.message, 80)}`); }
         } else if (v && WANTS_WEB.test(v)) await browse(dealId, v);
-      }
+      };
+      const beforePart = async (i) => { stopped(st); for (const q of b.questions.filter((x) => partOf(x) === i)) await askOne(q); };
+      if (b.outline.length < 2) await beforePart(0);            // 나눠 쓰지 않는 짧은 섹션은 먼저 다 묻는다
       let last = 0;
       const r = await pipe.writeSection(dealId, key, {
         brief: b,
         hooks: {
+          beforePart,
           onThought: thought(dealId),
           onStep: (t) => emit(dealId, { type: 'step', section: key, text: t }),
           onDraft: (html) => { const now = Date.now(); if (now - last > 250) { last = now; emit(dealId, { type: 'draft', section: key, html }); } },

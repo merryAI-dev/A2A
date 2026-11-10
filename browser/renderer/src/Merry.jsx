@@ -9,6 +9,7 @@ import { ago as agoMs } from './format.js';
 import './merry.css';
 import DocEditor from './merry/DocEditor.jsx';
 import Resizer from './Resizer.jsx';
+import Markdown from './Markdown.jsx';
 
 const ago = (iso) => (iso ? agoMs(Date.parse(iso)) : '');
 
@@ -126,7 +127,7 @@ function SectionPage({ s, sec, no, citeNo, onCite, onWrite, busy, live, target, 
              onClick={(e) => { if (live) { const f = e.target.closest?.('sup.mr-cite'); if (f) onCite(f.dataset.f); } else if (sec) onTarget(s.key); }}>
       <div className="mr-status mr-noprint">
         {live && <span className="warn">메리가 쓰는 중…</span>}
-        {!live && sec && <span className={sec.status === 'verified' ? 'ok' : sec.status === 'edited' ? '' : 'warn'}>{sec.status === 'verified' ? '검증 통과' : sec.status === 'edited' ? '사람이 고침' : '검토 필요'}</span>}
+        {!live && sec && <span className={sec.status === 'verified' ? 'ok' : sec.status === 'edited' ? '' : 'warn'}>{sec.status === 'verified' ? '검증 통과' : sec.status === 'edited' ? '사람이 고침' : sec.status === 'draft' ? '쓰다 멈춤 — 다시 쓰면 이어서 씁니다' : '검토 필요'}</span>}
         {!live && sum && <span className={sum.score >= 90 ? 'ok' : sum.score >= 70 ? 'warn' : 'bad'}>체크리스트 {sum.score}%</span>}
         {!live && sum?.unsupported > 0 && <span className="bad">근거 불일치 {sum.unsupported}</span>}
         {!live && sec && <span>{ago(sec.at)}</span>}
@@ -136,8 +137,15 @@ function SectionPage({ s, sec, no, citeNo, onCite, onWrite, busy, live, target, 
       <h1 className="mr-chapter">{s.title}</h1>
       {live ? <div dangerouslySetInnerHTML={{ __html: html }} />
         : sec ? (
-          <DocEditor html={sec.html} vars={vars} citeNo={citeNo} onCite={onCite} readOnly={busy}
-                     onSave={async (h) => { const r = await call('saveSectionHtml', dealId, s.key, h); if (r?.ok) setSaved(Date.now()); }} />
+          <>
+            <DocEditor html={sec.html} vars={vars} citeNo={citeNo} onCite={onCite} readOnly={busy}
+                       onSave={async (h) => { const r = await call('saveSectionHtml', dealId, s.key, h); if (r?.ok) setSaved(Date.now()); }} />
+            {sec.status === 'draft' && (
+              <div className="mr-noprint mt-4 text-center font-sans">
+                <Btn primary onClick={onWrite} disabled={busy}><Icon name="spark" className="size-3.5" />이어서 쓰기</Btn>
+              </div>
+            )}
+          </>
         ) : (
           <div className="mr-noprint mt-6 rounded-md border border-dashed border-[#bbb] p-6 text-center font-sans text-[13px] text-[#666]">
             아직 쓰지 않은 섹션입니다.
@@ -277,12 +285,12 @@ function CopilotPanel({ data, live, target, setTarget, run, refresh, chatW }) {
           return (
             <div key={m.id} className="text-[13px] leading-relaxed">
               <div className="mb-0.5 text-[11px] font-bold text-card-faint">메리{m.section ? ` · ${titleOf(m.section)}` : ''}</div>
-              <div className={`whitespace-pre-wrap ${m.data?.error ? 'text-accent' : ''}`}>{m.text}</div>
+              {m.data?.error ? <div className="whitespace-pre-wrap text-accent">{m.text}</div> : <Markdown src={m.text} />}
             </div>
           );
         })}
         {live.thinking && <Thinking label={live.label} text={live.thinking} open live />}
-        {live.reply && <div className="whitespace-pre-wrap text-[13px] leading-relaxed"><div className="mb-0.5 text-[11px] font-bold text-card-faint">메리</div>{live.reply}</div>}
+        {live.reply && <div className="text-[13px] leading-relaxed"><div className="mb-0.5 text-[11px] font-bold text-card-faint">메리</div><Markdown src={live.reply} /></div>}
         {live.step && busy && <div className="text-[11.5px] text-card-faint">{live.step}</div>}
       </div>
 

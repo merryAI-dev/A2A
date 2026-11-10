@@ -218,6 +218,45 @@ const ok = (name, fn) => { try { fn(); results.push(`✓ ${name}`); } catch (e) 
     assert.ok(o5.edges.some((e) => e.s === `task:deal-${nd.id}` && e.r === 'posted' && /#general$/.test(e.o)));
   });
 
+  // 나눠 쓰기 — 구성 번호 하나씩 쓰고, 중간에 멈추면 쓴 데까지 남기고, 다시 부르면 그 다음부터 잇는다
+  {
+    let n4 = 0, failAt = 3;
+    const seenParts = [], asked = [], drafts = [];
+    const ask4 = async (role, system, content) => {
+      if (role === 'write') {
+        n4++;
+        const m = String(content).match(/지금은 구성 (\d+)번/);
+        if (!m) return '<p>고쳐 쓴 글임.</p>';
+        if (Number(m[1]) === failAt) { failAt = 0; throw new Error('메리의 답이 출력 한도에서 잘렸어요(max_tokens)'); }
+        seenParts.push({ part: Number(m[1]), hadPrev: !/\(없음 — 첫 부분\)/.test(String(content)) });
+        return `<h4>부분 ${m[1]}</h4><p>내용 ${m[1]}임.</p>`;
+      }
+      if (role === 'check') return { claims: [] };
+      if (role === 'judge') return { items: [] };
+      return {};
+    };
+    const pipe4 = createPipeline({ room, apiKey: () => 'x', dir: path.join(tmp, 'invest'), ask: ask4 });
+    const brief4 = { outline: ['가', '나', '다'] };
+    const hooks4 = { beforePart: async (i) => { asked.push(i); }, onDraft: (h) => drafts.push(h) };
+    let err = null;
+    try { await pipe4.writeSection(deal.id, 'conclusion', { brief: brief4, hooks: hooks4, refine: false }); } catch (e) { err = e; }
+    const half = room.get(deal.id).sections.conclusion;
+    ok('나눠 쓰기: 멈추면 쓴 데까지(2/3) 초안으로 남는다', () => {
+      assert.ok(err); assert.equal(half.status, 'draft'); assert.equal(half.progress.done, 2);
+      assert.ok(/부분 1/.test(half.html) && /부분 2/.test(half.html) && !/부분 3/.test(half.html));
+      assert.ok(pipe4.resumable(half));
+    });
+    ok('나눠 쓰기: 부분마다 쓰기 직전에 물을 기회를 주고, 쓴 만큼 종이에 올린다', () => {
+      assert.deepEqual(asked, [0, 1, 2]); assert.ok(drafts.some((h) => /부분 1/.test(h) && !/부분 2/.test(h)));
+      assert.deepEqual(seenParts, [{ part: 1, hadPrev: false }, { part: 2, hadPrev: true }]);
+    });
+    const done4 = await pipe4.writeSection(deal.id, 'conclusion', { brief: brief4, hooks: hooks4, refine: false });
+    ok('나눠 쓰기: 다시 부르면 멈춘 부분(3)부터 이어서 끝낸다', () => {
+      assert.deepEqual(seenParts.map((x) => x.part), [1, 2, 3]); assert.ok(/부분 1[\s\S]*부분 2[\s\S]*부분 3/.test(done4.html));
+      assert.notEqual(done4.status, 'draft'); assert.ok(!pipe4.resumable(room.get(deal.id).sections.conclusion));
+    });
+  }
+
   console.log(results.join('\n'));
   console.log(`\n${results.filter((r) => r.startsWith('✓')).length}/${results.length} 통과`);
   fs.rmSync(tmp, { recursive: true, force: true });
