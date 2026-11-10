@@ -18,7 +18,7 @@ import { loadSafeStorage } from '../shim/electron.js';
 import { readFileSync } from '../shim/fs.js';
 import { CFG } from './config.js';
 import { handle, broadcast, on } from './hub.js';
-import { store, llmKey, runtime, loadStore, saveStore, pushState, profile } from './state.js';
+import { store, llmKey, runtime, loadStore, saveStore, pushState, profile, checkEngineLLM } from './state.js';
 
 const USER_DATA = '/userData';
 const DEFAULT_MODEL = 'claude-opus-5-5';
@@ -200,6 +200,7 @@ async function untilAttached() {
   for (let i = 0; i < 100 && !invest; i++) await new Promise((r) => setTimeout(r, 50));
 }
 handle('invest:call', async (name, ...args) => {
+  await checkEngineLLM();   // 서비스 워커가 방금 깨어났으면 엔진 키를 아직 확인하지 않은 상태다 — 메리가 "키가 없어요"로 멈추지 않게
   if (typeof name !== 'string') throw new Error('blocked');
   await untilAttached();
   await loadStore();

@@ -20,6 +20,9 @@ const { fill, fmt } = require('./calc');
 const M = { plan: 'claude-opus-5-5', write: 'claude-sonnet-5-5', check: 'claude-haiku-5-5', judge: 'claude-opus-5-5' };
 // 쓰기는 근거·구성이 이미 주어져 있어 깊은 생각이 필요 없다 — 기본 강도(high)로 두면 생각만으로 출력 한도를 다 쓰기도 한다
 const EFFORT = { write: 'medium' };
+// 한도에서 잘린 글을 잇는 다음 턴의 지시 — 앞 글을 다시 쓰거나 설명을 붙이면 이어 붙인 글이 깨진다
+const CONTINUE = '출력이 한도에서 끊겨서, 온전히 끝난 마지막 줄까지만 남겼습니다. 위 글의 바로 다음 줄부터 이어서 쓰세요. 이미 쓴 내용을 반복하지 말고, 인사·설명·코드 울타리 없이 이어지는 내용만 씁니다.';
+const MAX_CONTINUES = 3;
 
 const POLICY = `MYSC 임팩트 투자 심사 원칙
 - 근거가 없는 사실·숫자는 쓰지 않는다. 모르면 [확인 필요]로 남기고 질문으로 돌린다.
@@ -88,15 +91,18 @@ function createPipeline({ room, apiKey, dir, ask = null, onProgress = () => {} }
   // 자체 점검은 ask로 대신한다
   async function call(role, system, content, { maxTokens = role === 'check' ? 16000 : 64000, json = false, live = null } = {}) {
     if (ask) { const t = await ask(role, system, content); if (live?.onText && typeof t === 'string') live.onText(t, t); return json ? (typeof t === 'string' ? firstJson(t) : t) : t; }
-    // 생각이 출력 한도(max_tokens)를 다 써 버리면 글이 비거나 잘린다 — 한도에 걸리면 더 가벼운 강도로 한 번 더 한다
-    const once = async (effort) => {
+    // 출력 한도(max_tokens)에 걸렸을 때:
+    //   글이 나오다 잘렸으면 — 받은 데까지 두고 다음 턴에서 끊긴 자리부터 이어 쓴다(받은 글을 버리지 않는다)
+    //   생각만 하다 글이 한 줄도 없으면 — 이을 글이 없으니 더 가벼운 강도로 다시 한다
+    const textOf = (m) => m.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
+    const once = async (messages, effort, head = '') => {
       const stream = client().messages.stream({
-        model: M[role], max_tokens: maxTokens, system, messages: [{ role: 'user', content }],
+        model: M[role], max_tokens: maxTokens, system, messages,
         ...(role === 'check' ? {} : { thinking: { type: 'adaptive', display: 'summarized' } }),
         ...(effort ? { output_config: { effort } } : {}),
       });
       if (live) {
-        let text = '';
+        let text = head;
         stream.on('streamEvent', (ev) => {
           if (ev.type !== 'content_block_delta') return;
           if (ev.delta.type === 'thinking_delta') onProgress({ dealId: live.dealId, type: 'thinking', label: live.label, role, delta: ev.delta.thinking });
@@ -107,17 +113,33 @@ function createPipeline({ room, apiKey, dir, ask = null, onProgress = () => {} }
       usage.push({ role, model: M[role], effort: effort || null, ...m.usage });
       return m;
     };
-    let r = await once(EFFORT[role]);
-    if (r.stop_reason === 'max_tokens' && role !== 'check') {
-      if (live?.dealId) onProgress({ dealId: live.dealId, type: 'step', text: '생각이 길어져 출력 한도에 걸렸어요 — 더 가볍게 다시 하는 중…' });
-      r = await once('low');
+    const say = (text) => { if (live?.dealId) onProgress({ dealId: live.dealId, type: 'step', text }); };
+    const first = [{ role: 'user', content }];
+    let effort = EFFORT[role];
+    let r = await once(first, effort);
+    if (r.stop_reason === 'max_tokens' && !textOf(r).trim() && role !== 'check') {
+      say('생각이 길어져 출력 한도에 걸렸어요 — 더 가볍게 다시 하는 중…');
+      effort = 'low';
+      r = await once(first, effort);
     }
-    // 그래도 잘렸으면 잘린 글을 저장하지 않게 오류로
-    if (r.stop_reason === 'max_tokens') throw new Error('메리의 답이 출력 한도에서 잘렸어요(max_tokens) — 다시 시도하면 멈춘 곳부터 이어서 씁니다');
+    let joined = textOf(r);
+    const messages = [...first];
+    for (let turn = 0; r.stop_reason === 'max_tokens' && joined.trim() && turn < MAX_CONTINUES; turn++) {
+      say('글이 길어 한 번에 다 못 썼어요 — 끊긴 자리부터 이어서 쓰는 중…');
+      // 낱말 중간에서 이으면 이음매의 공백이 사라진다 — 온전히 끝난 줄(HTML이면 닫힌 요소)까지만 남기고 그 다음부터 잇는다
+      const ends = [...joined.matchAll(json ? /\n/g : /<\/[a-z0-9]+>|\n/gi)];
+      const cut = ends.length ? ends.at(-1).index + ends.at(-1)[0].length : joined.length;
+      const kept = joined.slice(0, cut).trimEnd() || joined;
+      const sep = kept === joined ? '' : '\n';
+      messages.push({ role: 'assistant', content: kept }, { role: 'user', content: CONTINUE });
+      r = await once(messages, effort, kept + sep);
+      joined = kept + sep + textOf(r);
+    }
+    if (r.stop_reason === 'max_tokens') throw new Error(`메리의 답이 출력 한도에서 끝나지 않았어요(max_tokens) — 다시 시도해 주세요`);
     const thought = r.content.filter((b) => b.type === 'thinking').map((b) => b.thinking).join('\n').trim();
     if (live?.onThought && thought) live.onThought(thought);
-    const text = r.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
-    // 생각만 하고 글이 없으면(출력 한도 소진·거절) 빈 섹션을 저장하지 않게 오류로
+    const text = joined;
+    // 생각만 하고 글이 없으면(거절 등) 빈 섹션을 저장하지 않게 오류로
     if (!text.trim()) throw new Error(`메리가 빈 답을 냈어요(${r.stop_reason}${r.stop_details?.category ? ` · ${r.stop_details.category}` : ''}) — 다시 시도해 주세요`);
     return json ? firstJson(text) : text;
   }
@@ -512,7 +534,7 @@ JSON 하나로만: {"matches":[{"item","status":"received"|"partial","facts":["f
     return (r?.matches || []).filter((m) => open.some((x) => x.id === m.item));
   }
 
-  return { extract, draftPack, plan, perspectives, writeSection, resumable, brief, answer, research, parseDirective, gaps, matchRequests, normQuestions, addLesson, playbook, usage: () => usage.slice(-50), MODELS: M, POLICY };
+  return { extract, draftPack, plan, perspectives, writeSection, resumable, call, brief, answer, research, parseDirective, gaps, matchRequests, normQuestions, addLesson, playbook, usage: () => usage.slice(-50), MODELS: M, POLICY };
 }
 
 module.exports = { createPipeline, firstJson, POLICY };

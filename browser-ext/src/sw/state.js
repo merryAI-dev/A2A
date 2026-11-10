@@ -35,14 +35,19 @@ export function saveStore() {
 
 // 엔진이 .env 키로 대신 불러 줄 수 있는지 — 서비스 워커가 잠들고 엔진이 늦게 떠도 되게 짧게 캐시한다
 let engineCheckedAt = 0;
+let engineMisses = 0;
 export async function checkEngineLLM() {
   if (runtime.engineLLMOff) { runtime.engineLLM = false; return false; }
   if (Date.now() - engineCheckedAt < (runtime.engineLLM ? 60000 : 5000)) return runtime.engineLLM;
   engineCheckedAt = Date.now();
   try {
-    const r = await fetch(`${CFG.engine}/llm/status`, { method: 'POST', signal: AbortSignal.timeout(1000) });
+    const r = await fetch(`${CFG.engine}/llm/status`, { method: 'POST', signal: AbortSignal.timeout(3000) });
     runtime.engineLLM = r.ok && (await r.json()).available === true;
-  } catch { runtime.engineLLM = false; }
+    engineMisses = 0;
+  } catch {
+    // 엔진이 긴 답을 흘리느라 한 번 늦게 답했다고 키가 없다고 하지 않는다 — 쓰던 일이 중간에 멈춘다. 연달아 못 닿을 때만 끈다
+    if (!runtime.engineLLM || ++engineMisses >= 3) runtime.engineLLM = false;
+  }
   return runtime.engineLLM;
 }
 export const llmKey = () => store.apiKey || (runtime.engineLLM ? ENGINE_LLM_KEY : '');
