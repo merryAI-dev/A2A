@@ -1,0 +1,64 @@
+diff --git a/chrome/browser/autocomplete/chrome_autocomplete_scheme_classifier.cc b/chrome/browser/autocomplete/chrome_autocomplete_scheme_classifier.cc
+index 12f64e72bc..d579223c4b 100644
+--- a/chrome/browser/autocomplete/chrome_autocomplete_scheme_classifier.cc
++++ b/chrome/browser/autocomplete/chrome_autocomplete_scheme_classifier.cc
+@@ -67,7 +67,8 @@ ChromeAutocompleteSchemeClassifier::GetInputTypeForScheme(
+       (ProfileIOData::IsHandledProtocol(scheme) ||
+        base::EqualsCaseInsensitiveASCII(scheme, content::kViewSourceScheme) ||
+        base::EqualsCaseInsensitiveASCII(scheme, url::kJavaScriptScheme) ||
+-       base::EqualsCaseInsensitiveASCII(scheme, url::kDataScheme))) {
++       base::EqualsCaseInsensitiveASCII(scheme, url::kDataScheme) ||
++       base::EqualsCaseInsensitiveASCII(scheme, "a2a"))) {
+     return metrics::OmniboxInputType::URL;
+   }
+ 
+diff --git a/chrome/browser/chrome_content_browser_client.cc b/chrome/browser/chrome_content_browser_client.cc
+index 25a19ea117..cabe329fde 100644
+--- a/chrome/browser/chrome_content_browser_client.cc
++++ b/chrome/browser/chrome_content_browser_client.cc
+@@ -15,6 +15,7 @@
+ #include <utility>
+ #include <vector>
+ 
++#include "base/strings/escape.h"
+ #include "base/base_switches.h"
+ #include "base/byte_size.h"
+ #include "base/check.h"
+@@ -945,6 +946,29 @@ bool IsIsolatedWebAppUrl(const GURL& url) {
+ #endif
+ 
+ // Handles the rewriting of the new tab page URL based on group policy.
++// A2A Browser: a2a://메리, a2a://접점, a2a://학습, a2a://업무지도 open the built-in pages;
++// anything else (a2a://홈) opens home.
++// The host of a non-special scheme arrives percent-encoded, so compare unescaped.
++bool HandleA2AScheme(GURL* url, content::BrowserContext* browser_context) {
++  if (!url->SchemeIs("a2a")) {
++    return false;
++  }
++  std::string name =
++      base::UnescapeBinaryURLComponent(url->spec().substr(strlen("a2a://")));
++  while (!name.empty() && name.back() == '/') {
++    name.pop_back();
++  }
++  const char* page = name == "메리"       ? "merry.html"
++                     : name == "학습"     ? "learn.html"
++                     : name == "업무지도" || name == "온톨로지" ? "map.html"
++                     : name == "접점" || name == "접점찾기" || name == "헌터"
++                         ? "contacts.html"
++                         : "newtab.html";
++  *url = GURL(base::StrCat({"chrome-extension://",
++                            extension_misc::kA2AExtensionId, "/", page}));
++  return true;
++}
++
+ bool HandleNewTabPageLocationOverride(
+     GURL* url,
+     content::BrowserContext* browser_context) {
+@@ -5235,6 +5259,7 @@ void ChromeContentBrowserClient::BrowserURLHandlerCreated(
+   // NTP policy takes precedence over extensions that override the NTP.
+   handler->AddHandlerPair(&HandleNewTabPageLocationOverride,
+                           BrowserURLHandler::null_handler());
++  handler->AddHandlerPair(&HandleA2AScheme, BrowserURLHandler::null_handler());
+ 
+   for (auto& part : extra_parts_) {
+     part->BrowserURLHandlerCreated(handler);

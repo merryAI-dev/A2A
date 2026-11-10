@@ -23,7 +23,11 @@ rsync -a --delete "$ROOT/browser-ext/dist/" "$SRC/a2a/extension/"
 rm -rf "$SRC/$OUT/Chromium.app/Contents/Frameworks/Chromium Framework.framework/Versions/"*/Resources/a2a(N)
 echo "✓ 내장 확장 → //a2a/extension"
 
-# 3) 빌드
+# 3) 브라우저 틀 색 — 앱 화면 CSS에서 뽑는다
+node "$ROOT/chromium/gen_colors.mjs" "$ROOT/browser/renderer/src/index.css" "$SRC/a2a/a2a_colors.h"
+echo "✓ 틀 색 → //a2a/a2a_colors.h"
+
+# 4) 빌드
 cd "$SRC"
 [[ -f "$OUT/args.gn" ]] || { echo "먼저 $OUT/args.gn을 만드세요 (browser/CHROMIUM_PLAN.md)"; exit 1; }
 gn gen "$OUT" >/dev/null
