@@ -756,6 +756,30 @@ test('n19-contacts-fill-in-as-found-real', async ({ cdp, EXT, Page }) => {
       && c.events.includes('channel') && channels.some((t) => t.includes('인스타그램') && t.includes('홈페이지에 링크됨')),
     channels: channels.length, liveUpdates: c.live, liveRows: c.liveRows, rows, events: c.events.length };
 });
+test('n20-drag-select-copy-and-search', async ({ cdp, EXT, Page, swEval, sleep }) => {
+  // 글을 끌어 고르면 노란 하이라이트 + 복사·검색 메뉴. 검색은 보던 화면을 두고 새 탭으로.
+  const p = await Page.open(cdp, `${EXT}/contacts.html`);
+  await p.waitFor("!!document.querySelector('#contacts h1')");
+  const style = await p.eval(`(() => {
+    const h = document.querySelector('#contacts h1');
+    const r = document.createRange(); r.selectNodeContents(h);
+    const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+    h.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+    return { select: getComputedStyle(h).userSelect, mark: getComputedStyle(h, '::selection').backgroundColor, button: getComputedStyle(document.querySelector('#contact-find')).userSelect };
+  })()`);
+  const menu = await p.waitFor("!!document.querySelector('#selection-copy') && !!document.querySelector('#selection-search')", 4000).catch(() => null);
+  await p.eval("document.querySelector('#selection-search').click()");
+  let tabs = [], hit = [];
+  for (let i = 0; i < 12 && !hit.length; i++) {
+    await sleep(500);
+    tabs = await swEval(cdp, "chrome.tabs.query({}).then((x) => x.map((t) => ({ id: t.id, url: t.pendingUrl || t.url || '' })))");
+    hit = tabs.filter((t) => t.url.includes('google.') && t.url.includes(encodeURIComponent('접점')));
+  }
+  if (hit.length) await swEval(cdp, `chrome.tabs.remove(${JSON.stringify(hit.map((t) => t.id))})`);
+  const stayed = await p.eval("location.pathname === '/contacts.html' && !document.querySelector('#selection-menu')");
+  await p.close();
+  return { ok: !!menu && style.select !== 'none' && style.mark === 'rgb(255, 228, 92)' && style.button === 'none' && hit.length === 1 && stayed, style, menu: !!menu, searched: hit.length, urls: tabs.map((t) => t.url.slice(0, 80)) };
+});
 test('n14-every-app-page-has-home-and-map', async ({ cdp, EXT, Page }) => {
   const seen = {};
   for (const page of ['merry', 'contacts', 'learn', 'map']) {

@@ -58,6 +58,7 @@ on('tab:switch', async (id) => {
   if (t) chrome.windows.update(t.windowId, { focused: true }).catch(() => {});
 });
 // 새 탭의 '검색' 칸 — 주소면 열고, 아니면 검색(Electron resolveInput과 같은 규칙). 그 새 탭 자리에서 연다.
+const searchUrl = (q) => `https://www.google.com/search?q=${encodeURIComponent(q)}`;
 on('nav:go', async (raw, port) => {
   const input = String(raw || '').trim();
   if (!input) return;
@@ -67,9 +68,11 @@ on('nav:go', async (raw, port) => {
   const page = ourUrl(input);
   if (page) return open(page);
   const looksUrl = /^[a-z][a-z0-9+.-]*:\/\//i.test(input) || /^[^\s]+\.[a-z]{2,}(\/|:|$)/i.test(input) || /^localhost(:\d+)?/.test(input);
-  const url = looksUrl ? httpUrl(input) : `https://www.google.com/search?q=${encodeURIComponent(input)}`;
+  const url = looksUrl ? httpUrl(input) : searchUrl(input);
   if (url) open(url);
 });
+// 화면에서 끌어 고른 글 검색 — 보던 화면은 두고 새 탭으로
+on('search:text', (raw) => { const q = String(raw || '').trim().slice(0, 500); if (q) chrome.tabs.create({ url: searchUrl(q) }); });
 // 메리·학습의 근거 링크 — 새 탭으로
 on('bookmark:open', (url) => { const u = httpUrl(String(url || '')); if (u) chrome.tabs.create({ url: u }); });
 on('tab:new', (url) => chrome.tabs.create(typeof url === 'string' && /^https?:\/\//.test(url) ? { url } : {}));

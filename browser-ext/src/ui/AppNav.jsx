@@ -1,5 +1,6 @@
 // 우리 화면 어디서나 보이는 맨 위 메뉴 — 앱(홈·메리·접점 찾기·학습·업무 지도)을 오가는 길은 여기 하나다.
 // 탭과 홈 단추는 브라우저 탭 줄이, 대화·채널·기록은 옆 패널이 맡는다 — 같은 목록을 다른 곳에 또 두지 않는다.
+import SelectionMenu from './SelectionMenu.jsx';
 import Icon from './Icon.jsx';
 
 export const APPS = [
@@ -32,6 +33,7 @@ export function AppFrame({ current, scroll = false, children }) {
     <div id="app-frame" className="flex h-screen flex-col bg-raise">
       <AppNav current={current} />
       <div id="app-sheet" className={`relative min-h-0 flex-1 rounded-tl-lg bg-card text-card-ink ${scroll ? 'overflow-y-auto' : 'overflow-hidden'}`}>{children}</div>
+      <SelectionMenu />
     </div>
   );
 }
