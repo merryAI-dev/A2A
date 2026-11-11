@@ -20,6 +20,7 @@ const P = {
   stop: <rect x="7" y="7" width="10" height="10" rx="2.2" />,
   check: <path d="M5.5 12.5l4.2 4.2 8.8-9.4" />,
   alert: <><circle cx="12" cy="12" r="8.5" /><path d="M12 8v4.6M12 15.8h.01" /></>,
+  split: <><rect x="3.5" y="5" width="17" height="14" rx="2.5" /><path d="M12 5v14" /></>,
   search: <><circle cx="11" cy="11" r="6.5" /><path d="M19.5 19.5l-3.8-3.8" /></>,
   page: <><path d="M13.5 3.5H7.5a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V8.5z" /><path d="M13.5 3.5v5h5M9 13h6M9 16.5h4" /></>,
   cursor: <path d="M6 4.5l12 6.2-5.3 1.7-1.8 5.4z" />,

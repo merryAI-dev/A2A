@@ -22,6 +22,9 @@ export default function AppNav({ current }) {
           <Icon name={a.icon} className="size-4" />{a.label}
         </button>
       ))}
+      <button id="nav-split" title="분할 뷰 — 이 화면 옆에 다른 탭을 나란히 엽니다(다시 누르면 풉니다)" className={`${cls(false)} ml-auto shrink-0`} onClick={() => window.a2a.send('split:toggle')}>
+        <Icon name="split" className="size-4" />분할 뷰
+      </button>
     </nav>
   );
 }
