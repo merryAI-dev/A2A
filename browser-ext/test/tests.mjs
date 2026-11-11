@@ -658,7 +658,7 @@ test('n7-ema-callback-caught-from-tab', async ({ swEval, cdp, Page }) => {
 });
 test('n8-tools-include-write-text-and-contacts-no-tab', async ({ swEval, cdp }) => {
   const names = await swEval(cdp, "globalThis.a2a.makeAgent().toolList().map((t) => t.name)");
-  return { ok: names.includes('write_text') && names.includes('find_contacts'), names };
+  return { ok: names.includes('write_text') && names.includes('find_contacts') && names.includes('device_query') && names.includes('find_app'), names };
 });
 test('n9-bare-names-open-our-pages', async ({ cdp, Page }) => {
   const p = await Page.open(cdp, 'chrome://newtab/');
