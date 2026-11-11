@@ -26,6 +26,14 @@ function Btn({ children, onClick, primary, disabled, title, small }) {
     </button>
   );
 }
+// 메리는 문서를 HTML로 쓰다 보니 대화 답에도 태그를 섞는다 — 대화에서는 같은 뜻의 마크다운으로 바꿔 보여 준다
+const plain = (s) => (!/<\/?(ul|ol|li|b|strong|p|h[1-6]|br|em|table)\b/i.test(s) ? s : s
+  .replace(/<\/?(b|strong)>/gi, '**')
+  .replace(/\s*<li[^>]*>\s*/gi, '\n- ')
+  .replace(/\s*<h[1-6][^>]*>\s*/gi, '\n### ')
+  .replace(/<br\s*\/?>|<\/(p|li|ul|ol|h[1-6]|div|tr)>/gi, '\n')
+  .replace(/<\/?(ul|ol|p|div|span|em|i|u|table|tbody|thead|tr|td|th)\b[^>]*>/gi, ' ')
+  .replace(/\n[ \t]+/g, '\n').replace(/\n{2,}(?=- )/g, '\n').replace(/\n{3,}/g, '\n\n'));
 const Field = (p) => <input {...p} className={`h-8 w-full rounded-lg bg-field px-2.5 text-[13px] ring-1 ring-field-line outline-none focus:ring-card-faint ${p.className || ''}`} />;
 const Area = (p) => <textarea {...p} className={`w-full rounded-lg bg-field px-2.5 py-2 text-[13px] ring-1 ring-field-line outline-none focus:ring-card-faint ${p.className || ''}`} />;
 
@@ -285,12 +293,12 @@ function CopilotPanel({ data, live, target, setTarget, run, refresh, chatW }) {
           return (
             <div key={m.id} className="text-[13px] leading-relaxed">
               <div className="mb-0.5 text-[11px] font-bold text-card-faint">메리{m.section ? ` · ${titleOf(m.section)}` : ''}</div>
-              {m.data?.error ? <div className="whitespace-pre-wrap text-accent">{m.text}</div> : <Markdown src={m.text} />}
+              {m.data?.error ? <div className="whitespace-pre-wrap text-accent">{m.text}</div> : <Markdown src={plain(m.text)} />}
             </div>
           );
         })}
         {live.thinking && <Thinking label={live.label} text={live.thinking} open live />}
-        {live.reply && <div className="text-[13px] leading-relaxed"><div className="mb-0.5 text-[11px] font-bold text-card-faint">메리</div><Markdown src={live.reply} /></div>}
+        {live.reply && <div className="text-[13px] leading-relaxed"><div className="mb-0.5 text-[11px] font-bold text-card-faint">메리</div><Markdown src={plain(live.reply)} /></div>}
         {live.step && busy && <div className="text-[11.5px] text-card-faint">{live.step}</div>}
       </div>
 

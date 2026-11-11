@@ -3,11 +3,13 @@
 //   섹션 쓰기: 브리핑(구성 + 근거로 못 채우는 판단 질문) → 심사역 답(객관식/직접 입력, 결정으로 기록)
 //             → 쓰기(종이에 실시간) → 검증·채점 결과를 대화로 → 도구가 찾은 문제만 고쳐 쓰기
 //             → 남은 문제(근거 없는 주장)는 심사역에게 어떻게 할지 묻는다
+//   보고서 쓰기: 본문은 대화가 아니라 가운데 문서에 쓴다. 대화는 입력(지시·답)과 진행만 —
+//             "목차대로 쭉 써 보자"는 말이나, 한두 번 주고받아 정해진 것이 생긴 뒤의 "이제 쓸까요?" 승낙으로 시작한다
 //   심사역 말: 섹션을 고른 상태면 그 섹션을 지시대로 고쳐 쓰고("다음에도 적용할까요?" → 플레이북 교훈),
 //             아니면 첨부 자료(PDF)를 직접 읽고 답한다
 //   첨부: 자료를 올리면 바로 읽어 근거(쪽·인용)를 뽑고 대화에 알린다
 // 질문은 기다린다 — 답이 올 때까지 다음 단계로 가지 않는다. 대화·생각·질문·결정은 모두 업무 지도에 남는다.
-const { section: sectionOf } = require('./template');
+const { section: sectionOf, SECTIONS } = require('./template');
 
 const short = (s, n) => { s = String(s ?? '').replace(/\s+/g, ' ').trim(); return s.length > n ? `${s.slice(0, n)}…` : s; };
 
@@ -61,9 +63,11 @@ function createCopilot({ room, pipe, frn = null, bridge = null, typeDeal = () =>
   const run = (dealId, what, fn) => {
     const st = guard(dealId, what);
     (async () => {
-      try { await fn(st); }
+      let next = null;                // fn이 함수를 돌려주면 손을 뗀 뒤 이어서 한다(예: 승낙받은 보고서 쓰기)
+      try { next = await fn(st); }
       catch (e) { say(dealId, `문제가 생겨 멈췄어요: ${short(e.message || e, 300)}`, { data: { error: true } }); }
       finally { release(dealId); }
+      if (typeof next === 'function') next();
     })();
     return { started: true };
   };
@@ -204,11 +208,17 @@ function createCopilot({ room, pipe, frn = null, bridge = null, typeDeal = () =>
   function write(dealId, key) {
     const s = sectionOf(key);
     if (!s) throw new Error('모르는 섹션');
-    return run(dealId, `${s.title} 쓰기`, async (st) => {
+    return run(dealId, `${s.title} 쓰기`, (st) => writeOne(dealId, key, st));
+  }
+
+  // 섹션 하나를 종이에 쓴다. batch(목차대로 이어 쓰기)면 대화에는 진행과 질문만 남기고, 끝난 뒤의 처리 질문은 모아서 알린다
+  async function writeOne(dealId, key, st, { batch = false } = {}) {
+    const s = sectionOf(key);
+    {
       const d = room.get(dealId);
       const cx = room.latestCompute(dealId);
       stepMsg(dealId, `${s.title} — 근거 ${d.facts.length}개, 유효한 결정 ${d.decisions.filter((x) => !x.supersededBy).length}개${cx ? `, 계산 변수 ${Object.keys(cx.vars).length}개` : ', 가정이 아직 잠기지 않음'}로 시작합니다`, key);
-      if (!d.facts.length) say(dealId, '아직 읽은 자료가 없어요. IR·재무제표를 첨부해 주시면 근거를 뽑아 쓰겠습니다. 지금은 뼈대만 쓰고 숫자 칸은 [확인 필요]로 남길게요.', { section: key });
+      if (!d.facts.length && !batch) say(dealId, '아직 읽은 자료가 없어요. IR·재무제표를 첨부해 주시면 근거를 뽑아 쓰겠습니다. 지금은 뼈대만 쓰고 숫자 칸은 [확인 필요]로 남길게요.', { section: key });
       // 쓰다 멈춘 섹션이면 구성을 다시 잡지 않고 다음 부분부터 잇는다
       const prev = pipe.resumable(d.sections[key]);
       let b;
@@ -218,7 +228,7 @@ function createCopilot({ room, pipe, frn = null, bridge = null, typeDeal = () =>
       } else {
         b = await pipe.brief(dealId, key, { onThought: thought(dealId) });
         stopped(st);
-        say(dealId, `이렇게 쓰려고 해요. 한 부분씩 써서 바로 종이에 올리고, 여쭤볼 것은 그 부분을 쓰기 직전에 물을게요.\n${b.outline.map((x, i) => `${i + 1}. ${x}`).join('\n')}${b.note ? `\n\n${b.note}` : ''}`, { section: key });
+        if (!batch) say(dealId, `이렇게 쓰려고 해요. 한 부분씩 써서 바로 종이에 올리고, 여쭤볼 것은 그 부분을 쓰기 직전에 물을게요.\n${b.outline.map((x, i) => `${i + 1}. ${x}`).join('\n')}${b.note ? `\n\n${b.note}` : ''}`, { section: key });
       }
       // 질문은 그 답이 필요한 부분을 쓰기 직전에 — 그 앞부분은 기다리지 않고 먼저 종이에 올라간다
       const partOf = (q) => Math.min(Math.max((Number(q.part) || 1) - 1, 0), Math.max(b.outline.length - 1, 0));
@@ -249,6 +259,7 @@ function createCopilot({ room, pipe, frn = null, bridge = null, typeDeal = () =>
       emit(dealId, { type: 'draft', section: key, html: null });
       stopped(st);
       const bad = r.unsupportedClaims || [];
+      if (batch) { stepMsg(dealId, `${s.title} — 문서에 올림 (체크리스트 ${r.summary.score}%${bad.length ? `, 근거 미확인 문장 ${bad.length}개` : ''})`, key); return { unsupported: bad.length }; }
       say(dealId, `${s.title}을(를) 종이에 올렸어요 (체크리스트 ${r.summary.score}%${r.summary.rounds ? ', 한 번 고쳐 씀' : ''}). 고칠 곳은 이 대화로 말씀해 주세요.`, { section: key });
       if (bad.length) {
         const v = await ask(dealId, {
@@ -266,8 +277,46 @@ function createCopilot({ room, pipe, frn = null, bridge = null, typeDeal = () =>
           room.decide(dealId, { topic: `${s.title} 근거 미확인 문장 처리`, chosen: '심사역이 직접 확인하고 그대로 둠', section: key });
         }
       }
+      return { unsupported: bad.length };
+    }
+  }
+
+  // ── 목차대로 이어 쓰기 — 아직 안 쓴(또는 쓰다 멈춘) 섹션을 순서대로 문서에. 대화에는 본문을 쓰지 않는다 ──
+  const BODY = SECTIONS.filter((x) => x.key !== 'cover');
+  const todo = (dealId) => { const d = room.get(dealId); return BODY.filter((x) => !d.sections[x.key] || pipe.resumable(d.sections[x.key])); };
+  function writeAll(dealId) {
+    return run(dealId, '보고서 쓰기', async (st) => {
+      const keys = todo(dealId);
+      if (!keys.length) { say(dealId, '목차의 섹션을 모두 문서에 써 두었어요. 고칠 섹션을 고르고 말씀해 주세요.'); return; }
+      say(dealId, `목차대로 ${keys.length}개 섹션을 가운데 문서에 씁니다. 본문은 문서에 올리고, 여기에는 진행과 여쭤볼 것만 남길게요. 멈추려면 멈춤을 누르세요.`);
+      const flagged = [];
+      for (const [i, x] of keys.entries()) {
+        stopped(st);
+        emit(dealId, { type: 'step', section: x.key, text: `${x.title} (${i + 1}/${keys.length})` });
+        const r = await writeOne(dealId, x.key, st, { batch: true });
+        if (r?.unsupported) flagged.push(`${x.title} ${r.unsupported}개`);
+      }
+      say(dealId, `${keys.length}개 섹션을 문서에 올렸어요. 고칠 곳은 문서에서 그 섹션을 고른 뒤 여기에 말씀해 주세요.${flagged.length ? `\n근거로 확인되지 않은 문장이 남은 섹션: ${flagged.join(', ')}` : ''}`);
     });
   }
+
+  // 정해진 것이 생겼으면 "이제 쓸까요?" — 검토마다 한 번만 묻는다. 승낙하면 true
+  const offered = new Set();
+  async function offerWrite(dealId) {
+    const d = room.get(dealId);
+    const live = d.decisions.filter((x) => !x.supersededBy);
+    if (offered.has(dealId) || !live.length || Object.keys(d.sections).length) return false;
+    offered.add(dealId);
+    const v = await ask(dealId, {
+      text: `지금까지 정한 것으로 투심보고서 초안을 가운데 문서에 쓸까요?\n${live.slice(-5).map((x) => `· ${short(x.topic, 60)} → ${short(x.chosen, 60)}`).join('\n')}\n근거 ${d.facts.length}개를 쓰고, 아직 못 받은 자료는 [확인 필요]로 남깁니다.`,
+      options: ['목차대로 쓰기', '아직이요'], item: false,
+    });
+    return v === '목차대로 쓰기';
+  }
+  // 대화로 쓰라고 한 말 — 본문을 대화에 쓰지 않고 문서 쓰기로 돌린다
+  const WANTS_WRITE = /(써|쓰자|쓸까|쓰기|작성|채워)/;
+  const WANTS_ALL = /(목차|보고서|투심|전체|전부|모두|쭉|처음부터|나머지|끝까지)/;
+  const named = (text) => { const t = text.replace(/\s/g, '').toLowerCase(); return BODY.find((x) => t.includes(x.title.replace(/^[IVX]+\.\s*/, '').replace(/\s*\(.*\)$/, '').replace(/\s/g, '').toLowerCase())); };
 
   // ── 심사역이 대화창에 쓴 말 ──
   function user(dealId, text, { section = null } = {}) {
@@ -283,6 +332,11 @@ function createCopilot({ room, pipe, frn = null, bridge = null, typeDeal = () =>
     }
     if (bridge?.freight && FREIGHT_RE.test(text)) return run(dealId, '운송비 찾기', () => freightFlow(dealId, text));
     if (WANTS_WEB.test(text)) return run(dealId, '웹 찾기', () => browse(dealId, text));
+    if (!section && WANTS_WRITE.test(text)) {
+      const one = named(text);
+      if (one) return write(dealId, one.key);
+      if (WANTS_ALL.test(text)) return writeAll(dealId);
+    }
     const sec = section && room.get(dealId).sections[section];
     if (sec) {
       const s = sectionOf(section);
@@ -307,6 +361,7 @@ function createCopilot({ room, pipe, frn = null, bridge = null, typeDeal = () =>
       });
       emit(dealId, { type: 'reply', text: null });
       say(dealId, out || '(답을 만들지 못했어요)');
+      if (await offerWrite(dealId)) return () => writeAll(dealId);
     });
   }
 
@@ -342,7 +397,7 @@ function createCopilot({ room, pipe, frn = null, bridge = null, typeDeal = () =>
     text = String(text || '').trim().slice(0, 8000);
     if (!text) throw new Error('지시 내용이 비었어요');
     const tmp = `intake_${Date.now()}`;
-    let dealId = null;
+    let dealId = null, goWrite = false;
     busy.set(tmp, { what: '지시 읽기' });
     send('invest:progress', { type: 'intake', state: 'start' });
     (async () => {
@@ -392,6 +447,7 @@ function createCopilot({ room, pipe, frn = null, bridge = null, typeDeal = () =>
           } else if (v && WANTS_WEB.test(v)) await browse(dealId, v);
         }
         say(dealId, `받을 자료 ${room.get(dealId).items.filter((x) => x.kind === 'request' && x.status === 'open').length}개를 논의·결정 탭의 "받을 자료"에 올렸어요. 자료가 오면 여기로 끌어다 놓아 주세요 — 들어온 것은 제가 체크합니다.`);
+        goWrite = await offerWrite(dealId);
       } catch (e) {
         if (dealId) say(dealId, `검토를 여는 중 문제가 생겼어요: ${short(e.message || e, 300)}`, { data: { error: true } });
         else send('invest:progress', { type: 'intake', state: 'error', text: short(e.message || e, 300) });
@@ -399,13 +455,14 @@ function createCopilot({ room, pipe, frn = null, bridge = null, typeDeal = () =>
         busy.delete(tmp);
         if (dealId) release(dealId);
         send('invest:progress', { type: 'intake', state: 'done', dealId });
+        if (goWrite) writeAll(dealId);
       }
     })();
     return { started: true };
   }
 
   return {
-    write, user, answer, attached, intake,
+    write, writeAll, user, answer, attached, intake,
     stop: (dealId) => { const st = busy.get(dealId); if (st) { st.stopped = true; release(dealId); } return { ok: true }; },
     state: (dealId) => ({ busy: busy.get(dealId)?.what || null, waiting: [...waits.entries()].filter(([, w]) => w.dealId === dealId).map(([k]) => k) }),
   };

@@ -36,7 +36,7 @@
   @keyframes breathe { 50% { opacity: .45 } }
 }
 
-:root { --brand:#ff6b45; }
+:root { --brand:#ff6b45; --select:#ffe45c; --select-ink:#151b23; }
 [data-tone="light"] {
   --ink:#16202b; --sub:#4f5b69; --faint:#7c8795;
   --glass:rgb(255 255 255 / .34); --glass-line:rgb(255 255 255 / .55);

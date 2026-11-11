@@ -3,5 +3,6 @@ import '../shared/bridge.js';
 import { createRoot } from 'react-dom/client';
 import '../ui/index.css';
 import SidePanel from '../ui/SidePanel.jsx';
+import SelectionMenu from '../ui/SelectionMenu.jsx';
 
-createRoot(document.getElementById('root')).render(<SidePanel />);
+createRoot(document.getElementById('root')).render(<><SidePanel /><SelectionMenu /></>);
