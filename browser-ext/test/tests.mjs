@@ -757,7 +757,7 @@ test('n19-contacts-fill-in-as-found-real', async ({ cdp, EXT, Page }) => {
     channels: channels.length, liveUpdates: c.live, liveRows: c.liveRows, rows, events: c.events.length };
 });
 test('n20-drag-select-copy-and-search', async ({ cdp, EXT, Page, swEval, sleep }) => {
-  // 글을 끌어 고르면 노란 하이라이트 + 복사·검색 메뉴. 검색은 보던 화면을 두고 새 탭으로.
+  // 글을 끌어 고르면 노란 하이라이트 + 복사·검색 메뉴. 검색은 보던 탭에서 열리고 뒤로 가기로 돌아온다.
   const p = await Page.open(cdp, `${EXT}/contacts.html`);
   await p.waitFor("!!document.querySelector('#contacts h1')");
   const style = await p.eval(`(() => {
@@ -768,17 +768,14 @@ test('n20-drag-select-copy-and-search', async ({ cdp, EXT, Page, swEval, sleep }
     return { select: getComputedStyle(h).userSelect, mark: getComputedStyle(h, '::selection').backgroundColor, button: getComputedStyle(document.querySelector('#contact-find')).userSelect };
   })()`);
   const menu = await p.waitFor("!!document.querySelector('#selection-copy') && !!document.querySelector('#selection-search')", 4000).catch(() => null);
+  const before = (await swEval(cdp, 'chrome.tabs.query({})')).length;
   await p.eval("document.querySelector('#selection-search').click()");
-  let tabs = [], hit = [];
-  for (let i = 0; i < 12 && !hit.length; i++) {
-    await sleep(500);
-    tabs = await swEval(cdp, "chrome.tabs.query({}).then((x) => x.map((t) => ({ id: t.id, url: t.pendingUrl || t.url || '' })))");
-    hit = tabs.filter((t) => t.url.includes('google.') && t.url.includes(encodeURIComponent('접점')));
-  }
-  if (hit.length) await swEval(cdp, `chrome.tabs.remove(${JSON.stringify(hit.map((t) => t.id))})`);
-  const stayed = await p.eval("location.pathname === '/contacts.html' && !document.querySelector('#selection-menu')");
+  const went = await p.waitFor("location.hostname.includes('google.')", 15000).catch(() => null);
+  const after = (await swEval(cdp, 'chrome.tabs.query({})')).length;
+  await p.eval('history.back()').catch(() => {});
+  const back = await p.waitFor("location.pathname === '/contacts.html' && !!document.querySelector('#contacts h1')", 10000).catch(() => null);
   await p.close();
-  return { ok: !!menu && style.select !== 'none' && style.mark === 'rgb(255, 228, 92)' && style.button === 'none' && hit.length === 1 && stayed, style, menu: !!menu, searched: hit.length, urls: tabs.map((t) => t.url.slice(0, 80)) };
+  return { ok: !!menu && style.select !== 'none' && style.mark === 'rgb(255, 228, 92)' && style.button === 'none' && !!went && after === before && !!back, style, menu: !!menu, went: !!went, sameTab: after === before, back: !!back };
 });
 test('n14-every-app-page-has-home-and-map', async ({ cdp, EXT, Page }) => {
   const seen = {};

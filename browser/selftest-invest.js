@@ -257,6 +257,50 @@ const ok = (name, fn) => { try { fn(); results.push(`✓ ${name}`); } catch (e) 
     });
   }
 
+  // 본문은 대화가 아니라 문서에 — "목차대로 쭉 써 보자"와, 정해진 것이 생긴 뒤의 "이제 쓸까요?" 승낙
+  {
+    const { SECTIONS } = require('./invest/template');
+    const body = SECTIONS.filter((x) => x.key !== 'cover');
+    const wrote = [];
+    const stub = {
+      resumable: () => null,
+      brief: async () => ({ outline: ['하나'], questions: [], note: '' }),
+      answer: async () => '짧은 답',
+      writeSection: async (dealId, key) => {
+        wrote.push(key);
+        room.saveSection(dealId, { key, title: key, html: `<p>본문-${key}</p>`, status: 'review' });
+        return { summary: { score: 90, rounds: 0 }, unsupportedClaims: key === 'risk' ? [{ text: '근거 없는 문장' }] : [] };
+      },
+    };
+    const cp5 = createCopilot({ room, pipe: stub, send: () => {} });
+    const settle = async (id, choice) => { for (let i = 0; i < 300 && (cp5.state(id).busy || !i); i++) { const w = cp5.state(id).waiting[0]; if (w) cp5.answer(id, w, { choice }); await new Promise((r) => setTimeout(r, 5)); } };
+    const a = room.create({ company: '문서에쓰기' });
+    cp5.user(a.id, '위 내용 기반으로 목차에 따라서 쭉 써보자');
+    await settle(a.id, '아직이요');
+    const chatA = room.chat(a.id).filter((m) => m.role === 'merry').map((m) => m.text).join('\n');
+    ok('보고서 쓰기: "목차대로 쭉 써 보자" → 모든 섹션을 문서에 쓰고, 대화에는 본문을 쓰지 않는다', () => {
+      assert.deepEqual(wrote, body.map((x) => x.key)); assert.equal(Object.keys(room.get(a.id).sections).length, body.length);
+      assert.ok(!/본문-/.test(chatA)); assert.ok(/근거로 확인되지 않은 문장이 남은 섹션/.test(chatA));
+    });
+    wrote.length = 0;
+    const b = room.create({ company: '쓸까요' });
+    cp5.user(b.id, '이 회사 어때?');
+    await settle(b.id, '목차대로 쓰기');
+    ok('보고서 쓰기: 정해진 것이 없으면 쓰자고 묻지 않는다', () => { assert.equal(wrote.length, 0); assert.ok(!room.chat(b.id).some((m) => m.kind === 'ask')); });
+    room.decide(b.id, { topic: '중심 임팩트 축', chosen: '국산쌀 소비 확대' });
+    cp5.user(b.id, '그럼 리스크는?');
+    await settle(b.id, '목차대로 쓰기');
+    await settle(b.id, '목차대로 쓰기');
+    const asks = room.chat(b.id).filter((m) => m.kind === 'ask');
+    ok('보고서 쓰기: 정해진 것이 생기면 한 번 "쓸까요?"를 묻고, 승낙하면 문서에 쓴다', () => {
+      assert.equal(asks.length, 1); assert.ok(/중심 임팩트 축 → 국산쌀 소비 확대/.test(asks[0].text)); assert.deepEqual(wrote, body.map((x) => x.key));
+    });
+    wrote.length = 0;
+    cp5.user(b.id, '시장 분석 다시 써줘');
+    await settle(b.id, '아직이요');
+    ok('보고서 쓰기: 섹션 이름으로 말하면 그 섹션만 문서에 쓴다', () => assert.deepEqual(wrote, ['market']));
+  }
+
   console.log(results.join('\n'));
   console.log(`\n${results.filter((r) => r.startsWith('✓')).length}/${results.length} 통과`);
   fs.rmSync(tmp, { recursive: true, force: true });

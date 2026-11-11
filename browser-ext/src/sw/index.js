@@ -71,8 +71,15 @@ on('nav:go', async (raw, port) => {
   const url = looksUrl ? httpUrl(input) : searchUrl(input);
   if (url) open(url);
 });
-// 화면에서 끌어 고른 글 검색 — 보던 화면은 두고 새 탭으로
-on('search:text', (raw) => { const q = String(raw || '').trim().slice(0, 500); if (q) chrome.tabs.create({ url: searchUrl(q) }); });
+// 화면에서 끌어 고른 글 검색 — 여느 브라우저처럼 보던 탭에서 연다(뒤로 가기로 돌아온다).
+// 사이드 패널에서 고른 글은 패널 옆의 지금 탭에서 연다.
+on('search:text', async (raw, port) => {
+  const q = String(raw || '').trim().slice(0, 500);
+  if (!q) return;
+  const tabId = port?.sender?.tab?.id ?? (await chrome.tabs.query({ active: true, lastFocusedWindow: true }))[0]?.id;
+  if (tabId != null) chrome.tabs.update(tabId, { url: searchUrl(q) });
+  else chrome.tabs.create({ url: searchUrl(q) });
+});
 // 메리·학습의 근거 링크 — 새 탭으로
 on('bookmark:open', (url) => { const u = httpUrl(String(url || '')); if (u) chrome.tabs.create({ url: u }); });
 on('tab:new', (url) => chrome.tabs.create(typeof url === 'string' && /^https?:\/\//.test(url) ? { url } : {}));
