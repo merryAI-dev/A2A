@@ -113,27 +113,98 @@ function Spark({ points }) {
   );
 }
 
-// 고른 항로의 머리 — 큰 숫자, 변화량, 기간 범위 안의 위치, 기준일
-function Head({ lane }) {
-  if (lane.usd_per_feu == null) return <div className="text-[13px] text-card-sub">{lane.name_ko} — 이번 표에 값이 없어요.</div>;
-  const ch = lane.change;
-  const { low, high, weeks } = lane.range;
-  const pos = high > low ? ((lane.usd_per_feu - low) / (high - low)) * 100 : 50;
+// ── 경로 비교(스카이스캐너식) — 도착 항구마다 카드. 운임은 연결된 지수, 운항 일수·배편은 출처를 연결하면 채워진다 ──
+const TAG = { cheapest: '가장 저렴한 항로', asked: '물어본 항구' };
+const SORTS = [['recommended', '추천'], ['price', '저렴한 순'], ['fastest', '빠른 순']];
+const STATUS = { connected: ['연결됨', 'text-ok'], needs_key: ['키를 넣으면 연결', 'text-warn'], key_present: ['키 있음 · 연결 전', 'text-warn'], review: ['검토 중', 'text-card-faint'] };
+
+function RouteCard({ o, origin }) {
+  const p = o.price;
   return (
-    <div className="freight-lane" data-lane={lane.code}>
-      <div className="text-[12px] text-card-sub">부산 → {lane.name_ko} <span className="text-card-faint">{lane.code} · {lane.name}</span></div>
-      <div className="mt-1 flex flex-wrap items-baseline gap-x-3 gap-y-1">
-        <b className="freight-rate text-[32px] leading-none font-bold tracking-tight tabular-nums">{usd(lane.usd_per_feu)}</b>
-        <span className="text-[12.5px] text-card-sub">40피트 한 대</span>
-        {ch && <span className={`freight-change text-[13px] tabular-nums ${tone(ch.abs)}`}>{signed(ch.abs, usd)} ({signed(ch.pct, (v) => `${v}%`)}) <span className="text-card-faint">전주 대비</span></span>}
+    <li className="route-card rounded-xl bg-card px-4 py-3.5 ring-1 ring-card-line hover:ring-card-faint" data-port={o.port.code || ''}>
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
+        <div className="flex min-w-0 flex-1 items-center gap-3">
+          <div className="w-[76px] shrink-0">
+            <div className="text-[15px] font-semibold">{origin}</div>
+            <div className="text-[11px] text-card-faint">KRPUS</div>
+          </div>
+          <div className="min-w-[110px] flex-1 text-center">
+            <div className="route-transit text-[11.5px] text-card-sub">{o.transit.days != null ? `${o.transit.days}일` : '운항 일수 · 연결 전'}</div>
+            <div className="relative my-1 h-px bg-card-line"><span className="absolute -top-[3px] right-0 size-[7px] rounded-full bg-card-faint" /></div>
+            <div className="text-[11px] text-card-faint">{o.lane.name_ko} 항로</div>
+          </div>
+          <div className="w-[118px] shrink-0 text-right">
+            <div className="truncate text-[15px] font-semibold">{o.port.name_ko}</div>
+            <div className="text-[11px] text-card-faint">{o.port.code || o.lane.code}</div>
+          </div>
+        </div>
+        <div className="w-[150px] shrink-0 border-l border-card-line pl-4 text-right max-sm:w-full max-sm:border-0 max-sm:pl-0">
+          {p ? (
+            <>
+              <b className="route-price text-[20px] font-bold tabular-nums">{usd(p.usd_per_feu)}</b>
+              <div className="text-[11px] text-card-sub">40피트 · 항로 지수</div>
+              <div className="text-[11px] text-card-faint tabular-nums">기준일 {p.as_of}</div>
+            </>
+          ) : <div className="text-[12px] text-card-faint">운임 없음</div>}
+        </div>
       </div>
-      <div className="mt-3 flex items-center gap-3 text-[11.5px] text-card-sub">
-        <span className="shrink-0 tabular-nums">{weeks}주 최저 {usd(low)}</span>
-        <div className="relative h-1 flex-1 rounded-full bg-raise"><span className="absolute top-1/2 size-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-card-ink" style={{ left: `${pos}%` }} /></div>
-        <span className="shrink-0 tabular-nums">최고 {usd(high)}</span>
+      <div className="mt-2.5 flex flex-wrap items-center gap-1.5 text-[11.5px]">
+        {o.tags.map((t) => <span key={t} className={`rounded px-1.5 py-0.5 ${t === 'cheapest' ? 'bg-accent-soft text-accent' : 'bg-raise text-card-sub'}`}>{TAG[t] || t}</span>)}
+        <span className="route-sailings text-card-faint">
+          {o.sailings.length ? `배편 ${o.sailings.length}개` : '출발일·선사 · 선사 스케줄 연결 전'}
+        </span>
       </div>
-      <div className="freight-asof mt-2 text-[11.5px] text-card-sub">기준일 {lane.as_of}{lane.stale ? ' · 공표가 2주 넘게 없었어요' : ''}</div>
-    </div>
+    </li>
+  );
+}
+
+function Routes({ cmp, origin }) {
+  const [sort, setSort] = useState('recommended');
+  const list = useMemo(() => {
+    const xs = [...cmp.options];
+    if (sort === 'price') xs.sort((a, b) => (a.price?.usd_per_feu ?? 1e12) - (b.price?.usd_per_feu ?? 1e12));
+    if (sort === 'fastest') xs.sort((a, b) => (a.transit.days ?? 1e9) - (b.transit.days ?? 1e9));
+    return xs;
+  }, [cmp, sort]);
+  const sameLane = cmp.lanes_used?.length === 1 && cmp.options.length > 1;
+  return (
+    <section id="freight-routes" className="mt-5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div id="route-sorts" className="flex rounded-lg bg-raise p-0.5 text-[12.5px]">
+          {SORTS.map(([k, label]) => {
+            const on = cmp.sorts.includes(k);
+            return (
+              <button key={k} data-sort={k} disabled={!on} onClick={() => setSort(k)}
+                title={on ? '' : '운항 일수 출처가 연결되면 켜져요'}
+                className={`h-8 rounded-md px-3 ${sort === k ? 'bg-card font-semibold text-card-ink shadow-sel' : 'text-card-sub hover:text-card-ink'} disabled:cursor-not-allowed disabled:opacity-40`}>{label}</button>
+            );
+          })}
+        </div>
+        <span className="text-[12px] text-card-sub">도착 후보 {cmp.options.length}곳</span>
+      </div>
+      {sameLane && <div className="mt-2 text-[12px] text-card-sub">이 항구들은 모두 {cmp.options[0].lane.name_ko} 항로라 운임 지수가 같아요 — 항구별 차이는 선사 스케줄을 연결하면 보여요.</div>}
+      <ul className="mt-3 space-y-2">{list.map((o) => <RouteCard key={o.id} o={o} origin={origin} />)}</ul>
+    </section>
+  );
+}
+
+function Providers({ list }) {
+  return (
+    <section id="freight-providers" className="mt-8">
+      <h2 className="text-[13px] font-semibold">비교에 쓰는 출처</h2>
+      <ul className="mt-2 divide-y divide-card-line rounded-lg ring-1 ring-card-line">
+        {list.map((p) => {
+          const [label, color] = STATUS[p.status] || [p.status, 'text-card-sub'];
+          return (
+            <li key={p.id} data-provider={p.id} data-status={p.status} className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 px-3 py-2.5 text-[12.5px]">
+              <b className="font-semibold">{p.name}</b>
+              <span className={`text-[11.5px] ${color}`}>{label}</span>
+              <span className="w-full text-[11.5px] text-card-sub">{p.gives} — {p.note}</span>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
   );
 }
 
@@ -158,9 +229,9 @@ function Freight() {
     if (!f.destination.trim() || busy) return;
     setBusy(true); setErr(''); setOut(null);
     try {
-      const d = await window.a2a.invoke('freight:ocean', { ...f, weeks: 13 });
+      const d = await window.a2a.invoke('freight:compare', { ...f, weeks: 13 });
       setOut(d);
-      if (d.lanes?.length) setPick(d.lanes.slice(0, 2).map((l) => l.code));
+      if (d.lanes_used?.length) setPick(d.lanes_used.slice(0, 2));
     } catch (x) { setErr(String(x.message || x)); }
     finally { setBusy(false); }
   };
@@ -204,8 +275,8 @@ function Freight() {
 
         {out && (
           <section id="freight-result" className="mt-5" data-status={out.status}>
-            {out.reason && <div id="freight-reason" className="rounded-lg bg-raise px-3 py-2.5 text-[13px]">{out.reason}</div>}
-            <div className="mt-3 grid gap-5 sm:grid-cols-2">{out.lanes.map((l) => <Head key={l.code} lane={l} />)}</div>
+            {out.reason && out.status === 'unknown' && <div id="freight-reason" className="rounded-lg bg-raise px-3 py-2.5 text-[13px]">{out.reason}</div>}
+            {out.options.length > 0 && <Routes cmp={out} origin={out.origin?.input || '부산'} />}
             {(out.notes || []).map((n) => <div key={n} className="freight-note mt-3 text-[12.5px] text-warn">{n}</div>)}
           </section>
         )}
@@ -261,6 +332,8 @@ function Freight() {
             </table>
           </section>
         )}
+
+        {out?.providers && <Providers list={out.providers} />}
 
         {src && (
           <div id="freight-source" className="mt-8 rounded-lg bg-raise px-3 py-3 text-[12px] leading-relaxed text-card-sub">
