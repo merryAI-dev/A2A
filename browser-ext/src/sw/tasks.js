@@ -540,6 +540,13 @@ handle('freight:board', async (input) => {
   const weeks = Math.max(2, Math.min(156, Number(input?.weeks) || 13));
   return engineJson(`/v1/freight/ocean/board?weeks=${weeks}`);
 });
+// 경로 비교(도착 항구별 카드) — 운임은 연결된 지수, 운항 일수·배편은 출처 연결 전이면 비어 온다
+handle('freight:compare', async (input) => {
+  await loadStore();
+  const body = { origin: String(input?.origin || '').slice(0, 80), destination: String(input?.destination || '').slice(0, 80),
+                 container: String(input?.container || '40').slice(0, 20), cargo: String(input?.cargo || '').slice(0, 120) };
+  return engineJson('/v1/freight/ocean/compare', { method: 'POST', body: JSON.stringify(body) });
+});
 // 사람이 쓴 질문 한 문장(메리 대화 등) → 문장 속 도착지마다 운임. 결과 원문은 근거(derived_from)로 남는다
 export async function freightAsk(text, { cargo = '' } = {}) {
   const d = await engineJson('/v1/freight/ocean/ask', { method: 'POST', body: JSON.stringify({ text: String(text || '').slice(0, 2000), cargo: String(cargo).slice(0, 120) }) });

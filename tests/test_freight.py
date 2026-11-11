@@ -161,3 +161,44 @@ def test_ask_answers_each_destination_and_says_origin_was_assumed():
     assert rates.ask("부산에서 제노바로", client=client(), today=TODAY)["origin_assumed"] is False
     none = rates.ask("운송비가 얼마나 들까", client=client(), today=TODAY)
     assert none["destinations"] == [] and none["results"] == []
+
+
+# ── 경로 비교(스카이스캐너식 틀) ──
+from app.freight import compare as cmp
+
+
+def test_compare_lists_ports_with_lane_price_and_empty_transit():
+    out = cmp.compare("부산", "스페인", client=client(), today=TODAY)
+    assert out["kind"] == "compare" and out["status"] == "ambiguous"
+    ports = [o["port"]["code"] for o in out["options"]]
+    assert ports[0] == "ESBIO" and set(ports) == {"ESBCN", "ESVLC", "ESALG", "ESBIO"}      # 싼 항로가 먼저
+    bio = out["options"][0]
+    assert bio["lane"]["code"] == "KNEI" and bio["price"]["usd_per_feu"] == 3537 and bio["price"]["kind"] == "index"
+    assert bio["price"]["as_of"] == "2026-11-09" and bio["tags"] == ["cheapest"]
+    assert all(o["transit"] == {"days": None, "status": "not_connected", "provider": None} and o["sailings"] == [] for o in out["options"])
+    assert "fastest" not in out["sorts"]          # 운항 일수가 없으면 빠른 순을 켜지 않는다
+
+
+def test_compare_puts_the_asked_port_first_and_no_cheapest_when_all_equal():
+    out = cmp.compare("KR", "ITGOA", client=client(), today=TODAY)
+    assert out["options"][0]["port"]["code"] == "ITGOA" and out["options"][0]["tags"] == ["asked"]
+    assert all("cheapest" not in o["tags"] for o in out["options"])     # 모두 지중해 항로라 값이 같다
+
+
+def test_compare_alternative_ports_on_other_lanes_get_their_own_lane_value():
+    out = cmp.compare("KR", "ESBCN", client=client(), today=TODAY)       # 요청 항로는 지중해 하나
+    bio = next(o for o in out["options"] if o["port"]["code"] == "ESBIO")
+    assert bio["lane"]["code"] == "KNEI" and bio["price"]["usd_per_feu"] == 3537
+
+
+def test_compare_unknown_has_no_options():
+    out = cmp.compare("상하이", "IT", client=client(), today=TODAY)
+    assert out["status"] == "unknown" and out["options"] == [] and out["providers"]
+
+
+def test_providers_never_claim_a_connection_they_do_not_have(monkeypatch):
+    ids = {p["id"]: p["status"] for p in cmp.providers()}
+    assert ids["kcci"] == "connected" and ids["maersk"] == "needs_key" and ids["distance"] == "review"
+    monkeypatch.setenv("MAERSK_CONSUMER_KEY", "x")
+    m = next(p for p in cmp.providers() if p["id"] == "maersk")
+    assert m["status"] == "key_present" and "env" not in m      # 키가 있어도 어댑터 전엔 연결됐다고 하지 않는다

@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 
 from ..saas.auth import SaasUser, current_user
-from . import rates
+from . import compare, rates
 
 router = APIRouter(prefix="/v1/freight", tags=["freight"])
 
@@ -29,6 +29,16 @@ class AskIn(BaseModel):
 @router.post("/ocean")
 def ocean(body: OceanIn, user: SaasUser = Depends(current_user)):
     return rates.estimate(body.origin, body.destination, body.container, body.cargo, weeks=body.weeks)
+
+
+@router.post("/ocean/compare")
+def compare_routes(body: OceanIn, user: SaasUser = Depends(current_user)):
+    return compare.compare(body.origin, body.destination, body.container, body.cargo, weeks=body.weeks)
+
+
+@router.get("/ocean/providers")
+def providers(user: SaasUser = Depends(current_user)):
+    return {"providers": compare.providers()}
 
 
 @router.get("/ocean/board")

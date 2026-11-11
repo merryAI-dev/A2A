@@ -745,8 +745,11 @@ test('n20-freight-korea-to-italy-real', async ({ cdp, Page, swEval }) => {
   await p.eval("document.querySelector('#freight-find').click()");
   const done = await p.waitFor("!!document.querySelector('#freight-result') || !!document.querySelector('#freight-error')", 30000).catch(() => null);
   const r = await p.eval(`(() => { const q = (s) => document.querySelector(s)?.innerText || ''; return {
-    status: document.querySelector('#freight-result')?.dataset.status, lane: document.querySelector('.freight-lane')?.dataset.lane,
-    rate: q('.freight-rate'), asof: q('.freight-asof'), change: q('.freight-change'), source: q('#freight-source'),
+    status: document.querySelector('#freight-result')?.dataset.status,
+    ports: [...document.querySelectorAll('.route-card')].map((c) => c.dataset.port),
+    rate: q('.route-card .route-price'), card: q('.route-card'), source: q('#freight-source'),
+    fastestOff: !!document.querySelector('#route-sorts [data-sort=fastest]')?.disabled,
+    providers: Object.fromEntries([...document.querySelectorAll('#freight-providers [data-provider]')].map((x) => [x.dataset.provider, x.dataset.status])),
     chart: document.querySelectorAll('#freight-chart polyline').length, board: document.querySelectorAll('#freight-board tbody tr[data-lane]').length,
     picked: [...document.querySelectorAll('#freight-board tbody tr.bg-raise')].map((t) => t.dataset.lane), composite: q('#freight-composite'),
     error: q('#freight-error') }; })()`);
@@ -760,7 +763,10 @@ test('n20-freight-korea-to-italy-real', async ({ cdp, Page, swEval }) => {
   const long = await pts();
   await p.shot('n20-freight.png', { width: 1200, height: 1400 });
   await p.close();
-  return { ok: !!opened && !!done && r.status === 'ok' && r.lane === 'KMDI' && /^\$\d{1,2},\d{3}$/.test(r.rate) && /기준일 \d{4}-\d{2}-\d{2}/.test(r.asof)
+  // 운항 일수·배편은 연결 전이라 숫자 대신 "연결 전" — 지어낸 일수가 없어야 한다
+  return { ok: !!opened && !!done && r.status === 'ok' && r.ports[0] === 'ITGOA' && r.ports.length >= 3 && /^\$\d{1,2},\d{3}$/.test(r.rate)
+      && /항로 지수\s*기준일 \d{4}-\d{2}-\d{2}/.test(r.card) && r.card.includes('운항 일수 · 연결 전') && r.card.includes('선사 스케줄 연결 전') && !/\d+일/.test(r.card)
+      && r.fastestOff && r.providers.kcci === 'connected' && r.providers.maersk === 'needs_key'
       && r.source.includes('견적이 아니에요') && r.source.includes('한국해양진흥공사') && r.source.includes('kobc.or.kr')
       && r.chart === 1 && r.board === 13 && r.picked.join() === 'KMDI' && r.composite.includes('KCCI') && short < 20 && long > 30, ...r, short, long };
 });
