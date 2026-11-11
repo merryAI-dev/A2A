@@ -26,7 +26,7 @@ const RISKY = new RegExp([
 ].join('|'), 'i');
 
 // 데이터 경계 — 웹페이지·팀원 글 안에 <page>·<chat>·<result> 태그 흉내가 있으면 무력화한다(경계를 못 빠져나가게)
-export const fence = (s) => String(s ?? '').replace(/<\s*\/?\s*(page|chat|result|ema|memory|facts|draft|contacts|freight)\b/gi, (m) => m.replace('<', '‹'));
+export const fence = (s) => String(s ?? '').replace(/<\s*\/?\s*(page|chat|result|ema|memory|facts|draft|contacts|device|freight)\b/gi, (m) => m.replace('<', '‹'));
 
 const SYSTEM = `당신은 A2A 브라우저 안에서 일하는 에이전트입니다. A2A는 리드 발굴 팀이 쓰는 업무 공간이고,
 사용자는 오른쪽 사이드 패널에서 당신에게 일을 맡깁니다. 당신은 사용자가 지금 보고 있는 탭에서
@@ -46,6 +46,7 @@ const SYSTEM = `당신은 A2A 브라우저 안에서 일하는 에이전트입�
   모르는 것(받는 주소, 프로그램 내용 등)은 blanks에 둡니다. 돌려받은 초안을 그대로 쓰고, 사실 검사에서 남은 의심이 있으면 사용자에게 알립니다.
 - 해상 운임을 묻는 메일·메시지에 답장을 쓸 때는 draft_freight_reply를 씁니다(시세·기준일·출처가 엔진에서 사실표로 바로 들어갑니다). 우리 회사의 실제 견적가는 모르는 칸으로 남으니, 지수 값을 견적가처럼 채워 넣지 말고 사용자에게 채울 칸을 알립니다.
 - 투자 건 검토·투자심사보고서는 우리 화면 '메리'(투자 딜룸)에서 합니다. 그런 요청이면 open_app으로 메리를 열고, 거기서 투자 건을 만들어 자료를 올리면 메리가 근거를 뽑아 보고서를 함께 쓴다고 안내합니다. 접점 찾기·해상 운임·학습·업무 지도(온톨로지)도 open_app으로 엽니다.
+- 이 컴퓨터 자체에 대한 질문(무엇이 돌고 있나, 어떤 앱·확장이 깔려 있나, 보안 설정이 어떤가)은 추측하지 말고 device_query·find_app으로 확인하고, 어느 테이블의 어떤 값이 근거인지 함께 말합니다. 결과가 0행이면 "없다"가 아니라 "확인되지 않았다"고 전합니다.
 - 끝나면 무엇을 했고 무엇을 찾았는지 짧게 한국어로 보고합니다. 출처 URL을 붙입니다.
 
 안전 규칙 (반드시)
@@ -122,6 +123,13 @@ const TOOLS = [
       + 'found=페이지에서 실제로 본 주소, pattern=이름+패턴 추측 — 둘을 섞어 말하지 말 것. 사람 이름(로마자)을 알면 person_first/person_last를 준다.',
     input_schema: S({ domain: { type: 'string' }, company: { type: 'string' },
                       person_first: { type: 'string' }, person_last: { type: 'string' } }, ['domain']) },
+  { name: 'device_query', description: '이 컴퓨터의 상태를 읽는다(읽기 전용, 사용자 승인 필요) — 실행 중인 프로그램, 열린 포트, 브라우저 확장, 디스크 암호화·방화벽 같은 보안 설정, OS·기기 정보. '
+      + 'sql 없이 부르면 읽을 수 있는 테이블 목록과 설명을 돌려준다 — 처음에는 그렇게 부를 것. sql에는 그 테이블만 쓰는 SELECT 한 문장(SQLite 문법, ; 없이)을 준다. 컬럼을 모르면 select * ... limit 1로 먼저 본다. '
+      + '결과는 최대 200행이므로 필요한 컬럼만 고르고 where·order by·limit으로 좁힌다. 지금 열린 탭과 무관하다. 설치된 앱은 이 도구가 아니라 find_app을 쓴다.',
+    input_schema: S({ sql: { type: 'string' } }, []) },
+  { name: 'find_app', description: '이 컴퓨터에 설치된 앱을 찾는다(사용자 승인 필요). name에 앱 이름이나 번들 ID의 일부를 주면(대소문자 무시) 그 글자가 든 앱의 이름·버전·경로를 돌려준다. name을 비우면 전체 목록. '
+      + '앱 폴더(/Applications 등)만 본다 — 다른 곳에 둔 앱이나 명령줄 도구는 잡히지 않으므로, 못 찾으면 "앱 폴더에는 없다"고 전할 것. 실행 중인지는 device_query의 processes로 따로 확인한다.',
+    input_schema: S({ name: { type: 'string' } }, []) },
 ].map((t) => ({ ...t, eager_input_streaming: true }));
 
 // 스트리밍 도구 입력은 서버가 검증하지 않는다 — 스키마대로 왔는지 직접 본다.
@@ -334,7 +342,7 @@ export class Agent {
     const tab = tabId != null ? await chrome.tabs.get(tabId).catch(() => null) : null;
     const url = () => chrome.tabs.get(tabId).then((t) => t.url || t.pendingUrl || '', () => '');
     const title = () => chrome.tabs.get(tabId).then((t) => t.title || '', () => '');
-    const needPage = !['navigate', 'new_tab', 'open_app', 'list_tabs', 'switch_tab', 'create_page', 'list_channels', 'post_to_channel', 'find_contacts', 'ocean_freight_rate', 'draft_freight_reply'].includes(name);
+    const needPage = !['navigate', 'new_tab', 'open_app', 'list_tabs', 'switch_tab', 'create_page', 'list_channels', 'post_to_channel', 'find_contacts', 'device_query', 'find_app', 'ocean_freight_rate', 'draft_freight_reply'].includes(name);
     if (needPage && !tab) return '작업할 탭이 없습니다 — new_tab으로 여세요';
     if (needPage && name !== 'go_back' && !tools.scriptable(tab.url)) {
       return '빈 탭(새 탭)입니다 — navigate로 알맞은 페이지부터 여세요';
@@ -428,6 +436,8 @@ export class Agent {
       case 'find_contacts': {
         return h.findContacts(input);      // tasks.js — 엔진 조회 + 업무 기록(근거)
       }
+      case 'device_query': return h.deviceQuery(input);   // tasks.js — 승인 + 엔진(app/device) + 업무 기록
+      case 'find_app': return h.findApp(input);
       case 'ocean_freight_rate': {
         return h.freightRate(input);       // tasks.js — 엔진 조회 + 업무 기록(근거)
       }
@@ -484,6 +494,8 @@ Agent.prototype.execReplay = async function execReplay(name, input) {
       const rec = r.engineResult?.();
       return rec ? `<contacts>\n(재현: 그때 기록된 결과)\n${fence(rec)}\n</contacts>` : '재현: 기록된 결과 없음';
     }
+    // 기기 상태는 그때와 지금이 다르다 — 재현에서는 다시 읽지 않는다
+    case 'device_query': case 'find_app': return '재현 모드: 이 컴퓨터의 상태는 다시 읽지 않습니다';
     case 'draft_freight_reply': return '재현 모드: 답장 초안은 다시 쓰지 않음(그때의 시세로 쓴 초안은 기록에 있음)';
     case 'ocean_freight_rate': {
       const rec = r.engineResult?.();
