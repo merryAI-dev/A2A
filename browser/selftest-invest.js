@@ -301,6 +301,53 @@ const ok = (name, fn) => { try { fn(); results.push(`✓ ${name}`); } catch (e) 
     ok('보고서 쓰기: 섹션 이름으로 말하면 그 섹션만 문서에 쓴다', () => assert.deepEqual(wrote, ['market']));
   }
 
+  // 운송비 — 숫자는 엔진 결과 그대로(대역), 근거 탭에 출처·기준일과 함께, 같은 기준일은 다시 넣지 않는다
+  {
+    const lane = (code, name_ko, v) => ({ code, name: code, name_ko, unit: 'USD/FEU', usd_per_feu: v, as_of: '2026-11-09',
+      previous: { usd_per_feu: v - 100, as_of: '2026-11-02' }, change: { abs: 100, pct: 2.5 }, range: { low: v - 500, high: v + 500, weeks: 13 } });
+    const source = { publisher: '한국해양진흥공사', name: 'KCCI', cadence: '매주 월요일 공표', url: 'https://kobc.or.kr/ebz/x', fetched_at: '2026-11-11T00:00:00Z' };
+    const asked = [];
+    const bridge6 = { freight: async (text) => { asked.push(text); return /어디/.test(text) ? { destinations: [], results: [], origin_assumed: true } : {
+      destinations: ['이탈리아', '스페인'], origin_assumed: true, results: [
+        { status: 'ok', destination: { input: '이탈리아' }, lanes: [lane('KMDI', '지중해', 4177)], source, not_included: ['내륙 운송'] },
+        { status: 'ambiguous', destination: { input: '스페인' }, lanes: [lane('KMDI', '지중해', 4177), lane('KNEI', '북유럽', 3537)], source, not_included: ['내륙 운송'] },
+      ] }; } };
+    const cp6 = createCopilot({ room, pipe: {}, bridge: bridge6, send: () => {} });
+    const idle = async (id) => { for (let i = 0; i < 300 && (cp6.state(id).busy || !i); i++) await new Promise((r) => setTimeout(r, 5)); };
+    const f = room.create({ company: '운송비' });
+    cp6.user(f.id, '이거 이탈리아나 스페인에 팔려면 지금 대략 운송비가 얼마나 들지?');
+    await idle(f.id);
+    const said = room.chat(f.id).filter((m) => m.role === 'merry' && m.kind === 'msg').map((m) => m.text);
+    const facts = room.get(f.id).facts.filter((x) => x.key.startsWith('freight_'));
+    ok('운송비: 엔진에 물어 나라마다 시세·기준일·출처로 답하고 "견적 아님"을 밝힌다', () => {
+      assert.equal(asked.length, 1);
+      assert.match(said.at(-1), /이탈리아 → 지중해 항로 \$4,177 \/ 40피트 한 대 \(기준일 2026-11-09/);
+      assert.match(said.at(-1), /스페인 — 도착 항구에 따라 항로가 갈려요/); assert.match(said.at(-1), /견적이 아니에요/); assert.match(said.at(-1), /kobc\.or\.kr/);
+    });
+    ok('운송비: 근거 탭에 항로마다 하나씩, 출처 URL·단위·기준일과 함께', () => {
+      assert.deepEqual(facts.map((x) => x.key).sort(), ['freight_kmdi', 'freight_knei']);
+      assert.ok(facts.every((x) => x.url === source.url && x.unit === 'USD/FEU' && x.period === '2026-11-09' && x.basis === 'web'));
+    });
+    cp6.user(f.id, '스페인 운임 다시');
+    await idle(f.id);
+    cp6.user(f.id, '어디로 보내면 운송비가?');
+    await idle(f.id);
+    const said2 = room.chat(f.id).filter((m) => m.role === 'merry' && m.kind === 'msg').map((m) => m.text);
+    ok('운송비: 같은 기준일은 다시 넣지 않고, 도착지가 없으면 숫자 없이 되묻는다', () => {
+      assert.equal(room.get(f.id).facts.filter((x) => x.key.startsWith('freight_')).length, 2);
+      assert.match(said2.at(-2), /이미 근거 탭에 있어요/);
+      assert.match(said2.at(-1), /어느 나라나 항구로 보낼지/); assert.ok(!/\$\d/.test(said2.at(-1)));
+    });
+    const plain = createCopilot({ room, pipe: { answer: async () => '일반 답' }, send: () => {} });
+    const g = room.create({ company: '운임연결없음' });
+    plain.user(g.id, '이탈리아로 보내면 운송비가 얼마야?');
+    for (let i = 0; i < 300 && (plain.state(g.id).busy || !i); i++) await new Promise((r) => setTimeout(r, 5));
+    ok('운송비: 운임 연결이 없는 곳(Electron 등)에선 이 흐름을 타지 않고 평소 답으로', () => {
+      assert.equal(asked.length, 3);
+      assert.equal(room.chat(g.id).filter((m) => m.role === 'merry' && m.kind === 'msg').at(-1).text, '일반 답');
+    });
+  }
+
   console.log(results.join('\n'));
   console.log(`\n${results.filter((r) => r.startsWith('✓')).length}/${results.length} 통과`);
   fs.rmSync(tmp, { recursive: true, force: true });

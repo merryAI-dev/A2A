@@ -239,6 +239,10 @@ app.include_router(platform_router)
 # 접점 발굴(법인 메일) — 구독 없이 공개 페이지에서 직접 (app/contacts/)
 from .contacts.router import router as contacts_router  # noqa: E402
 app.include_router(contacts_router)
+
+# 해상 운임(공개 지수) — 구독 없이 KOBC KCCI에서 직접 (app/freight/)
+from .freight.router import router as freight_router  # noqa: E402
+app.include_router(freight_router)
 # 개발용 모델 프록시 — A2A_DEV_LLM_PROXY=1일 때만 열린다
 from .llm_proxy import router as llm_proxy_router  # noqa: E402
 app.include_router(llm_proxy_router)

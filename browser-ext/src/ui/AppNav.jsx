@@ -1,4 +1,4 @@
-// 우리 화면 어디서나 보이는 맨 위 메뉴 — 앱(홈·메리·접점 찾기·학습·업무 지도)을 오가는 길은 여기 하나다.
+// 우리 화면 어디서나 보이는 맨 위 메뉴 — 앱(홈·메리·접점 찾기·해상 운임·학습·업무 지도)을 오가는 길은 여기 하나다.
 // 탭과 홈 단추는 브라우저 탭 줄이, 대화·채널·기록은 옆 패널이 맡는다 — 같은 목록을 다른 곳에 또 두지 않는다.
 import SelectionMenu from './SelectionMenu.jsx';
 import Icon from './Icon.jsx';
@@ -6,6 +6,7 @@ import Icon from './Icon.jsx';
 export const APPS = [
   { name: '메리', page: 'merry', icon: 'page', label: '메리' },
   { name: '접점 찾기', page: 'contacts', icon: 'people', label: '접점 찾기' },
+  { name: '해상 운임', page: 'freight', icon: 'globe', label: '해상 운임' },
   { name: '학습', page: 'learn', icon: 'spark', label: '학습' },
   { name: '업무 지도', page: 'map', icon: 'graph', label: '업무 지도 · 온톨로지' },
 ];
