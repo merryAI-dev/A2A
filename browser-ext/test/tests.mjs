@@ -658,7 +658,7 @@ test('n7-ema-callback-caught-from-tab', async ({ swEval, cdp, Page }) => {
 });
 test('n8-tools-include-write-text-and-contacts-no-tab', async ({ swEval, cdp }) => {
   const names = await swEval(cdp, "globalThis.a2a.makeAgent().toolList().map((t) => t.name)");
-  return { ok: names.includes('write_text') && names.includes('find_contacts') && names.includes('ocean_freight_rate'), names };
+  return { ok: names.includes('write_text') && names.includes('find_contacts') && names.includes('ocean_freight_rate') && names.includes('draft_freight_reply'), names };
 });
 test('n9-bare-names-open-our-pages', async ({ cdp, Page }) => {
   const p = await Page.open(cdp, 'chrome://newtab/');
@@ -773,6 +773,26 @@ test('n22-agent-freight-tool-carries-date-and-source', async ({ cdp, EXT, Page, 
   await p.close();
   return { ok: /^<freight>/.test(text) && /지중해\(KMDI Mediterranean\): \$\d{1,2},\d{3} \/ 40피트 1대\(FEU\) · 기준일 \d{4}-\d{2}-\d{2}/.test(text)
       && text.includes('견적 아님') && text.includes('한국해양진흥공사') && text.includes('kobc.or.kr') && text.includes('포함 안 됨'), text: text.slice(0, 700) };
+});
+// 운임 문의 답장의 사실표 — 숫자·기준일·출처가 엔진 결과에서 그대로 오고, 견적가는 언제나 모르는 칸인지(글쓰기 모델 없이 확인)
+test('n23-freight-reply-facts-come-from-the-engine', async ({ cdp, EXT, Page, swEval }) => {
+  const p = await Page.open(cdp, `${EXT}/freight.html`);
+  await p.waitFor('!!window.a2a');
+  if (process.env.A2A_ENGINE) await swEval(cdp, `globalThis.a2a.engineAt(${JSON.stringify(process.env.A2A_ENGINE)})`);
+  const d = await p.eval("window.a2a.invoke('freight:ocean', { origin: 'KR', destination: 'IT', container: '40', cargo: '가구' })");
+  const no = await p.eval("window.a2a.invoke('freight:ocean', { origin: '상하이', destination: 'IT', container: '40' })");
+  await p.close();
+  const brief = (x, input) => swEval(cdp, `globalThis.a2a.makeAgent().freightBrief(${JSON.stringify(x)}, ${JSON.stringify(input)})`);
+  const b = await brief(d, { inquiry: '부산에서 제노바까지 40피트 한 대 운임 문의드립니다', cargo: '가구', customer: 'Rossi Mobili' });
+  const n = await brief(no, {});
+  const lane = d.lanes[0];
+  const rate = `$${Math.round(lane.usd_per_feu).toLocaleString('en-US')}`;
+  const all = b.facts.map((f) => f.fact).join('\n');
+  return { ok: all.includes(rate) && all.includes(`기준일 ${lane.as_of}`) && all.includes('견적가가 아니다') && all.includes('들어 있지 않은 비용')
+      && b.facts.filter((f) => /\$\d/.test(f.fact)).every((f) => (f.source || '').includes('kobc.or.kr'))
+      && b.blanks.includes('우리 회사가 제시할 실제 견적가') && b.audience === 'Rossi Mobili' && b.facts.length <= 40 && b.facts.every((f) => f.fact.length <= 500)
+      && !n.facts.some((f) => /\$\d/.test(f.fact)) && n.facts.some((f) => f.fact.includes('확인하지 못했다')),
+    facts: b.facts.length, blanks: b.blanks, unknown: n.facts.map((f) => f.fact) };
 });
 // 실제 사이트 — 접점 찾기가 끝까지 기다리게 하지 않고, 읽는 대로 진행과 주소를 화면에 올리는지
 test('n19-contacts-fill-in-as-found-real', async ({ cdp, EXT, Page }) => {
