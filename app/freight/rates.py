@@ -36,7 +36,8 @@ SOURCE = {
     "cadence": "매주 월요일 공표",
 }
 UNIT = "USD/FEU"
-WEEKS = 13                      # 범위·추이를 보여 줄 기간
+WEEKS = 13                      # 범위·추이를 보여 줄 기본 기간
+MAX_WEEKS = 156                 # KCCI는 2022-11부터 — 3년이면 거의 전부
 TIMEOUT = 15.0
 CACHE_TTL = 30 * 60             # 주 1회 바뀌는 표 — 같은 표를 계속 치지 않는다
 STALE_DAYS = 14
@@ -156,15 +157,23 @@ def parse_timeseries(html: str) -> dict:
     return {"codes": codes, "rows": rows}
 
 
-def fetch_table(client: "httpx.Client | None" = None, today: "date | None" = None) -> dict:
-    """최근 WEEKS주 표. 실제 경로는 30분 캐시(주 1회 바뀌는 자료), 주입된 client는 캐시를 쓰지 않는다."""
+def _weeks(weeks) -> int:
+    try:
+        return max(2, min(MAX_WEEKS, int(weeks)))
+    except (TypeError, ValueError):
+        return WEEKS
+
+
+def fetch_table(client: "httpx.Client | None" = None, today: "date | None" = None, weeks: int = WEEKS) -> dict:
+    """최근 weeks주 표. 실제 경로는 기간별 30분 캐시(주 1회 바뀌는 자료), 주입된 client는 캐시를 쓰지 않는다."""
+    weeks = _weeks(weeks)
     if client is None:
         with _lock:
-            hit = _cache.get("table")
+            hit = _cache.get(("table", weeks))
             if hit and time.monotonic() - hit[0] < CACHE_TTL:
                 return hit[1]
     today = today or date.today()
-    form = {"sDay": (today - timedelta(weeks=WEEKS)).isoformat(), "eDay": today.isoformat(),
+    form = {"sDay": (today - timedelta(weeks=weeks)).isoformat(), "eDay": today.isoformat(),
             "siteCode": "shippinginfo", "mId": "0304000000"}
     c = client or netguard.make_client(TIMEOUT, headers={"User-Agent": "Mozilla/5.0 (Macintosh) A2A-Engine/0.1"})
     try:
@@ -180,7 +189,7 @@ def fetch_table(client: "httpx.Client | None" = None, today: "date | None" = Non
     out["fetched_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
     if client is None:
         with _lock:
-            _cache["table"] = (time.monotonic(), out)
+            _cache[("table", weeks)] = (time.monotonic(), out)
     return out
 
 
@@ -205,8 +214,8 @@ def _lane(code: str, table: dict, today: date) -> dict:
 
 
 def estimate(origin: str, destination: str, container: str = "40", cargo: str = "", *,
-             client: "httpx.Client | None" = None, today: "date | None" = None) -> dict:
-    """출발지·도착지 → 지금의 구간 운임 지수(USD/FEU)와 최근 13주 범위. 모르는 건 status로 말한다.
+             client: "httpx.Client | None" = None, today: "date | None" = None, weeks: int = WEEKS) -> dict:
+    """출발지·도착지 → 지금의 구간 운임 지수(USD/FEU)와 최근 weeks주(기본 13주) 범위·추이. 모르는 건 status로 말한다.
 
     status: ok(항로 하나로 정해짐) · ambiguous(후보 여럿 — 항구를 알려 주면 좁혀짐) · unknown(이 출처로는 답할 수 없음)
     """
@@ -231,7 +240,7 @@ def estimate(origin: str, destination: str, container: str = "40", cargo: str = 
         return {**base, "status": "unknown",
                 "reason": f"{d['input']}({d['country']})에 맞는 KCCI 항로를 정하지 못했습니다",
                 "available_lanes": [{"code": c, "name": n, "name_ko": k} for c, (n, k) in LANES.items()]}
-    table = fetch_table(client, today)
+    table = fetch_table(client, today, weeks)
     base["source"]["fetched_at"] = table["fetched_at"]
     base["lanes"] = [_lane(c, table, today) for c in codes]
     size = re.sub(r"[^0-9A-Za-z]", "", str(container or "40")).upper()
@@ -250,3 +259,66 @@ def estimate(origin: str, destination: str, container: str = "40", cargo: str = 
         return {**base, "status": "ambiguous",
                 "reason": f"{d['input']}은(는) 항로가 갈립니다({', '.join(LANES[c][1] for c in codes)}) — 도착 항구를 알려 주면 하나로 좁힙니다"}
     return {**base, "status": "ok"}
+
+
+def board(*, client: "httpx.Client | None" = None, today: "date | None" = None, weeks: int = WEEKS) -> dict:
+    """부산발 전체 항로 한눈에 — 종합지수(pt)와 13개 항로(USD/FEU)의 지금 값·전주 대비·기간 추이."""
+    today = today or date.today()
+    table = fetch_table(client, today, weeks)
+    comp = [{"date": r["date"], "value": r["values"].get("KCCI")} for r in table["rows"] if r["values"].get("KCCI") is not None]
+    composite = None
+    if comp:
+        cur, prev = comp[0], (comp[1] if len(comp) > 1 else None)
+        composite = {"code": "KCCI", "name": "Comprehensive Index", "name_ko": "종합지수", "unit": "pt",
+                     "value": cur["value"], "as_of": cur["date"],
+                     "change": prev and {"abs": cur["value"] - prev["value"],
+                                         "pct": round((cur["value"] - prev["value"]) / prev["value"] * 100, 2) if prev["value"] else None},
+                     "history": list(reversed(comp))}
+    return {"kind": "index", "unit": UNIT, "weeks": _weeks(weeks), "source": {**SOURCE, "fetched_at": table["fetched_at"]},
+            "not_included": NOT_INCLUDED, "composite": composite,
+            "lanes": [_lane(c, table, today) for c in LANES if c in table["codes"]]}
+
+
+# 문장 속 도착지 — 메리 대화처럼 사람이 쓴 말("이탈리아나 스페인에 팔려면")에서 이름표에 있는 곳만 줍는다.
+# 이름표에 없는 곳은 줍지 않는다(지어내지 않는다). 한국 이름은 출발지로 보고 빼며, 같은 나라는 한 번만.
+def places_in(text: str) -> list[dict]:
+    t = str(text or "")
+    low = re.sub(r"[\s\-_.,·]", "", t).lower()
+    hits = []
+    for name, code in sorted(NAMES.items(), key=lambda kv: -len(kv[0])):
+        if len(name) < 2 or (name.isascii() and len(name) < 4):
+            continue                     # "la"·"uk"·"uae" 같은 짧은 영문은 낱말 경계로만
+        i = low.find(name)
+        if i >= 0 and not any(i < e and i + len(name) > b for b, e, _ in hits):
+            hits.append((i, i + len(name), code))
+    for m in re.finditer(r"\b(UK|UAE|USA|LA|[A-Z]{2}[A-Z0-9]{3})\b", t):
+        code = NAMES.get(m.group(1).lower()) or (m.group(1) if len(m.group(1)) == 5 else None)
+        if code:
+            hits.append((10_000 + m.start(), 10_000 + m.end(), code))
+    out, seen = [], set()
+    for _, _, code in sorted(hits):
+        country = code[:2]
+        if country == "KR" or code in seen:
+            continue
+        if len(code) == 2 and any(c[:2] == country for c in seen):
+            continue
+        seen.add(code)
+        out.append(code)
+    # 같은 나라의 나라 코드와 항구 코드가 함께 잡히면 항구만 남긴다(더 구체적)
+    ports = {c[:2] for c in out if len(c) == 5}
+    return [c for c in out if len(c) == 5 or c not in ports][:5]
+
+
+def ask(text: str, *, origin: str = "KR", container: str = "40", cargo: str = "",
+        client: "httpx.Client | None" = None, today: "date | None" = None, weeks: int = WEEKS) -> dict:
+    """사람의 질문 한 문장 → 문장 속 도착지마다 estimate. 출발지는 문장에 없으면 한국(부산)으로 보고 그렇다고 밝힌다."""
+    # 답에는 사람이 쓰는 이름으로(IT → 이탈리아). 이름표의 첫 한국어 이름, 없으면 코드 그대로
+    label = {}
+    for k, v in NAMES.items():
+        if not k.isascii():
+            label.setdefault(v, k)
+    dests = [label.get(c, c) for c in places_in(text)]
+    named_origin = bool(re.search(r"(부산|인천|광양|busan|pusan)\S{0,3}(에서|발|from)", str(text), re.I))
+    return {"kind": "index", "unit": UNIT, "question": str(text or "")[:400], "destinations": dests,
+            "origin": origin, "origin_assumed": not named_origin,
+            "results": [estimate(origin, d, container, cargo, client=client, today=today, weeks=weeks) for d in dests]}

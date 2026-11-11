@@ -120,8 +120,44 @@ def test_http_surface(monkeypatch, tmp_path):
     monkeypatch.setenv("SAAS_DB_PATH", str(tmp_path / "saas.db"))
     monkeypatch.setenv("SAAS_ALLOWED_USERS", "boram")
     from app.main import app
-    monkeypatch.setattr(rates, "fetch_table", lambda c=None, today=None: {**rates.parse_timeseries(page()), "fetched_at": "2026-11-11T00:00:00+00:00"})
+    monkeypatch.setattr(rates, "fetch_table", lambda c=None, today=None, weeks=13: {**rates.parse_timeseries(page()), "fetched_at": "2026-11-11T00:00:00+00:00"})
     r = TestClient(app).post("/v1/freight/ocean", json={"origin": "한국", "destination": "이탈리아"}, headers={"X-Dev-User": "boram"})
     assert r.status_code == 200, r.text
     d = r.json()
     assert d["status"] == "ok" and d["lanes"][0]["code"] == "KMDI" and d["lanes"][0]["usd_per_feu"] == 4177
+
+
+def test_period_is_sent_and_bounded():
+    seen = []
+    rates.estimate("KR", "IT", client=client(seen=seen), today=TODAY, weeks=52)
+    assert "sDay=2025-11-12" in seen[0][2]
+    seen.clear()
+    rates.estimate("KR", "IT", client=client(seen=seen), today=TODAY, weeks=9999)
+    assert "sDay=2023-11-15" in seen[0][2]          # MAX_WEEKS(156)로 묶인다
+
+
+def test_board_has_composite_and_every_lane():
+    b = rates.board(client=client(), today=TODAY)
+    assert b["composite"]["value"] == 4668 and b["composite"]["unit"] == "pt" and b["composite"]["change"]["abs"] == 1
+    assert [l["code"] for l in b["lanes"]] == list(rates.LANES)
+    med = next(l for l in b["lanes"] if l["code"] == "KMDI")
+    assert med["usd_per_feu"] == 4177 and med["as_of"] == "2026-11-09" and b["source"]["fetched_at"]
+
+
+def test_places_in_a_sentence():
+    assert rates.places_in("이거 이탈리아나 스페인에 팔려면 지금 대략 운송비가 얼마나 들지?") == ["IT", "ES"]
+    assert rates.places_in("부산에서 제노바랑 로테르담 운임") == ["ITGOA", "NLRTM"]
+    assert rates.places_in("이탈리아 제노바로") == ["ITGOA"]          # 나라와 그 나라 항구가 같이 오면 항구만
+    assert rates.places_in("Ship to Genoa from Busan") == ["ITGOA"]
+    assert rates.places_in("운송비 얼마야") == [] and rates.places_in("클라우드 가격") == []
+
+
+def test_ask_answers_each_destination_and_says_origin_was_assumed():
+    a = rates.ask("이거 이탈리아나 스페인에 팔려면 지금 대략 운송비가 얼마나 들지?", client=client(), today=TODAY)
+    assert a["destinations"] == ["이탈리아", "스페인"] and a["origin_assumed"] is True
+    it, es = a["results"]
+    assert it["status"] == "ok" and it["lanes"][0]["code"] == "KMDI"
+    assert es["status"] == "ambiguous" and [l["code"] for l in es["lanes"]] == ["KMDI", "KNEI"]
+    assert rates.ask("부산에서 제노바로", client=client(), today=TODAY)["origin_assumed"] is False
+    none = rates.ask("운송비가 얼마나 들까", client=client(), today=TODAY)
+    assert none["destinations"] == [] and none["results"] == []

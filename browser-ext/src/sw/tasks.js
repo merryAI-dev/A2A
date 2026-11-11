@@ -19,7 +19,7 @@ let currentTask = null;
 let K = null;
 let runModel = null;
 let runTypeId = null;
-attach({ Agent, toolNames: () => TOOL_NAMES, toolDocs: () => TOOL_DOCS, chat: agentChat, delegate, running: () => running(), runModel: () => runModel, chatChannels: () => agentChat.channels(), currentType: () => runTypeId })
+attach({ Agent, toolNames: () => TOOL_NAMES, toolDocs: () => TOOL_DOCS, chat: agentChat, delegate, running: () => running(), runModel: () => runModel, chatChannels: () => agentChat.channels(), currentType: () => runTypeId, freight: (text, o) => freightAsk(text, o) })
   .then((k) => { K = k; })
   .catch((e) => console.warn('[knowledge]', e));
 // 웹 탭 수집 — 에이전트가 그 탭에서 일하는 중이면 agent, 아니면 human(Electron main.js watchTab과 같다)
@@ -472,6 +472,7 @@ function freightText(d) {
 async function oceanFreight(input) {
   const body = { origin: String(input.origin || '').slice(0, 80), destination: String(input.destination || '').slice(0, 80),
                  container: String(input.container || '40').slice(0, 20), cargo: String(input.cargo || '').slice(0, 120) };
+  if (Number.isInteger(input.weeks)) body.weeks = input.weeks;
   const r = await fetch(`${CFG.engine}/v1/freight/ocean`, {
     method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Dev-User': profile().user },
     body: JSON.stringify(body),
@@ -486,6 +487,27 @@ handle('freight:ocean', async (input) => {
   await loadStore();
   return (await oceanFreight(input || {})).d;
 });
+// 부산발 항로 전체(화면 첫머리) — 조회 기록은 남기지 않는다(사람이 시장을 둘러보는 것이라 근거로 쓰인 데이터가 아니다)
+async function engineJson(path, init = {}) {
+  const r = await fetch(`${CFG.engine}${path}`, { ...init, headers: { 'Content-Type': 'application/json', 'X-Dev-User': profile().user, ...(init.headers || {}) } });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.error?.message || `엔진 응답 ${r.status}`);
+  return d;
+}
+handle('freight:board', async (input) => {
+  await loadStore();
+  const weeks = Math.max(2, Math.min(156, Number(input?.weeks) || 13));
+  return engineJson(`/v1/freight/ocean/board?weeks=${weeks}`);
+});
+// 사람이 쓴 질문 한 문장(메리 대화 등) → 문장 속 도착지마다 운임. 결과 원문은 근거(derived_from)로 남는다
+export async function freightAsk(text, { cargo = '' } = {}) {
+  const d = await engineJson('/v1/freight/ocean/ask', { method: 'POST', body: JSON.stringify({ text: String(text || '').slice(0, 2000), cargo: String(cargo).slice(0, 120) }) });
+  for (const r of d.results || []) {
+    collect.agentToolResult({ platform: 'a2a-engine', tool: 'ocean_freight_rate', input: { origin: r.origin?.input, destination: r.destination?.input },
+                              text: freightText(r), sourceUrl: r.source?.url || '' });
+  }
+  return d;
+}
 // 화면이 준 run 번호를 진행 알림에 그대로 붙인다 — 여러 탭에서 찾아도 제 것만 받게
 handle('contacts:find', async (input) => {
   await loadStore();

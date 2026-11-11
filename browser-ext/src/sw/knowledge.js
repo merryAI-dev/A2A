@@ -28,7 +28,7 @@ let harness = null;
 let worktypes = null;
 let recaller = null;
 let ssotReg = null;
-let deps = null;                  // tasks.js가 넘겨 준다: { Agent, toolNames, chatChannels, delegate, runModel }
+let deps = null;                  // tasks.js가 넘겨 준다: { Agent, toolNames, chatChannels, delegate, runModel, freight }
 let invest = null;
 let learn = null;
 let ema = null;
@@ -95,6 +95,8 @@ export async function attach(d) {
       channels: () => d.chat.channels(),
       post: (cid, text, opts) => d.chat.post(cid, text, opts),
       delegate: (text) => d.delegate(text),
+      // 해상 운임 — 에이전트·해상 운임 화면과 같은 엔진 경로(app/freight). 메리가 운송비를 물으면 쓴다
+      freight: (text, opts) => d.freight(text, opts),
       // 맡긴 작업이 읽은 웹 페이지 — 근거로 가져온다(Electron main.js와 같다)
       reads: (taskId) => {
         const raw = onto.raw();
