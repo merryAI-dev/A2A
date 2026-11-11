@@ -15,7 +15,7 @@ description: 새 맥에서 A2A 브라우저(Chromium + 우리 패치 + 내장 �
 ## 사람이 해야 하는 것 (대신 하지 말 것)
 
 1. **Xcode 설치** — App Store에서 전체 Xcode(명령줄 도구만으로는 Chromium이 빌드되지 않는다). 설치 후 라이선스 동의는 관리자 암호가 필요하다: `sudo xcodebuild -license accept`
-2. **저장소 접근** — 비공개 저장소다. GitHub 로그인·권한은 사람이 한다.
+2. **GitHub** — 저장소는 공개라 받기만 하면 권한은 필요 없다. 고친 것을 올리려면 GitHub 로그인·권한은 사람이 한다.
 3. **Anthropic API 키** — 키를 대화에 붙여 넣게 하지 말 것. 사람이 **자기 터미널에서** `./setup-mac.sh`를 실행해 숨김 입력으로 넣게 하거나, `.env`의 `ANTHROPIC_API_KEY=` 줄을 직접 채우게 한다. 에이전트는 키 값을 읽거나 출력하지 않는다(`grep -c '^ANTHROPIC_API_KEY=.\+' .env`처럼 있는지만 확인).
 
 sudo가 필요한 명령, 시스템·보안 설정 변경은 실행하지 말고 사람에게 정확한 명령을 주고 기다린다.
