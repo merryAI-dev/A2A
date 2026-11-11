@@ -242,6 +242,9 @@ app.include_router(contacts_router)
 # 기기 상태 조회(osquery) — 같은 컴퓨터에서 온 요청만 받는다 (app/device/)
 from .device.router import router as device_router  # noqa: E402
 app.include_router(device_router)
+# 해상 운임(공개 지수) — 구독 없이 KOBC KCCI에서 직접 (app/freight/)
+from .freight.router import router as freight_router  # noqa: E402
+app.include_router(freight_router)
 # 개발용 모델 프록시 — A2A_DEV_LLM_PROXY=1일 때만 열린다
 from .llm_proxy import router as llm_proxy_router  # noqa: E402
 app.include_router(llm_proxy_router)

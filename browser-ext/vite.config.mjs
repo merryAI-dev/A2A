@@ -58,6 +58,7 @@ export default defineConfig({
         map: r('./src/map.html'),
         merry: r('./src/merry.html'),
         contacts: r('./src/contacts.html'),
+        freight: r('./src/freight.html'),
         learn: r('./src/learn.html'),
         sw: r('./src/sw/index.js'),
       },
