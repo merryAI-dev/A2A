@@ -1,0 +1,22 @@
+diff --git a/chrome/browser/extensions/api/side_panel/side_panel_api.cc b/chrome/browser/extensions/api/side_panel/side_panel_api.cc
+index 99e9cc39ad..d3c2d4b7bd 100644
+--- a/chrome/browser/extensions/api/side_panel/side_panel_api.cc
++++ b/chrome/browser/extensions/api/side_panel/side_panel_api.cc
+@@ -12,6 +12,7 @@
+ #include "chrome/browser/extensions/chrome_extension_function_details.h"
+ #include "chrome/browser/extensions/extension_tab_util.h"
+ #include "chrome/common/extensions/api/side_panel.h"
++#include "extensions/common/constants.h"
+ 
+ namespace extensions {
+ 
+@@ -73,7 +74,8 @@ ExtensionFunction::ResponseAction SidePanelOpenFunction::RunFunction() {
+   EXTENSION_FUNCTION_VALIDATE(extension());
+ 
+   // `sidePanel.open()` requires a user gesture.
+-  if (!user_gesture()) {
++  // A2A Browser: the built-in agent panel opens with each window.
++  if (!user_gesture() && extension()->id() != extension_misc::kA2AExtensionId) {
+     return RespondNow(
+         Error("`sidePanel.open()` may only be called in "
+               "response to a user gesture."));

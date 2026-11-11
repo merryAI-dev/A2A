@@ -1,0 +1,44 @@
+#!/bin/zsh
+# A2A Browser = Chromium + 우리 패치(patches/) + 내장 확장(browser-ext → 앱 번들 Resources/a2a).
+#   ./chromium/build.sh            확장 빌드 → Chromium 소스에 복사 → 패치 확인 → autoninja
+#   CHROMIUM_SRC=~/dev/chromium/src A2A_JOBS=8 ./chromium/build.sh
+# 결과: $CHROMIUM_SRC/out/A2A/Chromium.app (실행하면 사이드 패널·에이전트·팀 채팅·업무 지도가 이미 들어 있다)
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+SRC="${CHROMIUM_SRC:-$HOME/dev/chromium/src}"
+OUT="${A2A_OUT:-out/A2A}"
+export PATH="${DEPOT_TOOLS:-$HOME/dev/depot_tools}:$PATH"
+# node@22는 Homebrew에서 keg-only라 새 맥에선 PATH에 없다 — setup-mac.sh가 설치한 것을 쓴다
+command -v brew >/dev/null && [[ -d "$(brew --prefix node@22 2>/dev/null)/bin" ]] && export PATH="$(brew --prefix node@22)/bin:$PATH"
+command -v npm >/dev/null || { echo "node/npm이 없습니다 — ./setup-mac.sh를 먼저 돌리세요"; exit 1; }
+
+# 0) Chromium 버전 — 패치는 chromium/REVISION에 맞춰 만든다. 다르면 패치가 안 맞을 수 있다고 알린다
+WANT="$(head -1 "$ROOT/chromium/REVISION")"
+HAVE="$(git -C "$SRC" rev-parse HEAD 2>/dev/null || echo none)"
+[[ "$HAVE" == "$WANT" ]] || echo "⚠ Chromium 소스가 고정 버전과 다릅니다(소스 ${HAVE:0:10}, 고정 ${WANT:0:10}) — 패치가 안 맞으면 고정 버전으로 맞추세요"
+
+# 1) 패치 — 이미 들어 있으면 건너뛴다(새 Chromium으로 올렸을 때 안 맞으면 여기서 멈춘다)
+for p in "$ROOT"/chromium/patches/*.patch; do
+  if git -C "$SRC" apply --reverse --check "$p" 2>/dev/null; then echo "✓ 패치 적용됨: ${p:t}"
+  else git -C "$SRC" apply --3way "$p" && echo "✓ 패치 적용: ${p:t}"; fi
+done
+
+# 2) 내장 확장 — browser-ext를 빌드해 //a2a/extension 으로
+[[ -d "$ROOT/browser-ext/node_modules" ]] || ( cd "$ROOT/browser-ext" && npm ci --no-audit --no-fund >/dev/null )
+( cd "$ROOT/browser-ext" && npm run build >/dev/null )
+mkdir -p "$SRC/a2a"
+rsync -a --delete "$ROOT/browser-ext/dist/" "$SRC/a2a/extension/"
+# 폴더째 싣는 bundle_data는 안의 파일이 바뀐 걸 모른다 — 번들 안 사본을 지워 다시 복사되게
+rm -rf "$SRC/$OUT/Chromium.app/Contents/Frameworks/Chromium Framework.framework/Versions/"*/Resources/a2a(N)
+echo "✓ 내장 확장 → //a2a/extension"
+
+# 3) 브라우저 틀 색 — 앱 화면 CSS에서 뽑는다
+node "$ROOT/chromium/gen_colors.mjs" "$ROOT/browser/renderer/src/tokens.css" "$SRC/a2a/a2a_colors.h"
+echo "✓ 틀 색 → //a2a/a2a_colors.h"
+
+# 4) 빌드
+cd "$SRC"
+[[ -f "$OUT/args.gn" ]] || { mkdir -p "$OUT" && cp "$ROOT/chromium/args.gn" "$OUT/args.gn" && echo "✓ 빌드 설정 → $OUT/args.gn"; }
+gn gen "$OUT" >/dev/null
+caffeinate -dims autoninja -j "${A2A_JOBS:-8}" -C "$OUT" chrome
+echo "✓ $SRC/$OUT/Chromium.app"

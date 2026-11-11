@@ -1,0 +1,46 @@
+@import "tailwindcss";
+
+@import "./tokens.css";
+
+@utility drag { -webkit-app-region: drag; }
+@utility no-drag { -webkit-app-region: no-drag; }
+
+@layer base {
+  html, body, #root { height: 100%; margin: 0; overflow: hidden; }
+  body { font: 13px/1.45 var(--font-sans); color: var(--ink); background: #cfe3ee;
+    -webkit-font-smoothing: antialiased; }
+  /* 글은 여느 웹페이지처럼 끌어서 고르고 복사한다 — 누르는 것(버튼·메뉴·그림)만 빼고 */
+  button, summary, nav, canvas, svg, [role="separator"] { user-select: none; }
+  ::selection { background: var(--select); color: var(--select-ink); }
+  button { cursor: default; }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: rgb(128 128 128 / .25); border-radius: 8px; }
+}
+
+/* 배경화면 프리셋 — 화면 전체와 고르기 스와치가 같은 클래스를 쓴다 */
+.wall-sky { background:
+  radial-gradient(38% 30% at 18% 22%,rgb(255 255 255 / .95),transparent 70%),
+  radial-gradient(30% 22% at 30% 30%,rgb(255 255 255 / .7),transparent 70%),
+  radial-gradient(34% 26% at 82% 18%,rgb(255 255 255 / .85),transparent 70%),
+  radial-gradient(46% 30% at 70% 92%,rgb(255 255 255 / .9),transparent 70%),
+  radial-gradient(40% 26% at 10% 96%,rgb(255 255 255 / .75),transparent 70%),
+  linear-gradient(180deg,#7cc8ee 0%,#a9dcf4 45%,#d6effa 100%); }
+.wall-dawn { background:
+  radial-gradient(50% 40% at 80% 10%,rgb(255 236 214 / .95),transparent 70%),
+  radial-gradient(60% 50% at 10% 80%,rgb(210 196 250 / .9),transparent 70%),
+  linear-gradient(160deg,#ffcfb5 0%,#f6bfd3 48%,#cdc4f3 100%); }
+.wall-meadow { background:
+  radial-gradient(50% 40% at 85% 15%,rgb(255 255 236 / .9),transparent 70%),
+  radial-gradient(60% 45% at 15% 85%,rgb(170 214 186 / .85),transparent 70%),
+  linear-gradient(165deg,#e4f1d9 0%,#bfe0c8 55%,#dcefe2 100%); }
+.wall-sand { background:
+  radial-gradient(55% 45% at 80% 20%,rgb(255 255 255 / .7),transparent 70%),
+  linear-gradient(160deg,#f3ebdd 0%,#e7d8c2 60%,#f1e9dc 100%); }
+.wall-dusk { background:
+  radial-gradient(55% 50% at 78% 18%,rgb(118 86 214 / .55),transparent 70%),
+  radial-gradient(60% 55% at 12% 88%,rgb(40 108 160 / .55),transparent 70%),
+  radial-gradient(30% 25% at 45% 55%,rgb(255 120 90 / .18),transparent 70%),
+  linear-gradient(170deg,#141a33 0%,#0c1020 100%); }
+.wall-graphite { background:
+  radial-gradient(60% 50% at 70% 10%,rgb(255 255 255 / .06),transparent 70%),
+  linear-gradient(170deg,#202329 0%,#121418 100%); }

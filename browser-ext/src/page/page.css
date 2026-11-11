@@ -1,0 +1,36 @@
+@import "tailwindcss";
+/* 색은 다른 화면과 같은 토큰(tokens.css)에서 — 여기서는 shadcn/ui 부품이 쓰는 이름만 그 토큰에 잇는다 */
+@import "../../../browser/renderer/src/tokens.css";
+@custom-variant dark (&:is([data-tone="dark"] *));
+
+:root { --radius: 0.75rem; }
+@theme inline {
+  --color-background: var(--card);
+  --color-foreground: var(--card-ink);
+  --color-card-foreground: var(--card-ink);
+  --color-primary: var(--card-ink);
+  --color-primary-foreground: var(--card);
+  --color-secondary: var(--raise);
+  --color-secondary-foreground: var(--card-ink);
+  --color-muted: var(--raise);
+  --color-muted-foreground: var(--card-sub);
+  --color-border: var(--card-line);
+  --color-input: var(--field-line);
+  --color-ring: var(--card-faint);
+  --color-destructive: oklch(0.577 0.245 27.325);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+@layer base {
+  * { @apply border-border outline-ring/50; }
+  html, body, #root { height: 100%; margin: 0; }
+  body { @apply bg-raise text-foreground antialiased; font-family: var(--font-sans); }
+  /* 인쇄·PDF — 메뉴를 빼고 종이 전체가 이어지게 */
+  @media print {
+    body { background: white; }
+    .no-print { display: none !important; }
+    html, body, #root, #app-frame, #app-sheet { height: auto !important; overflow: visible !important; display: block !important; background: white !important; }
+  }
+}

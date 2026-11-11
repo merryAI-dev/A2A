@@ -1,0 +1,2 @@
+/* 색·바탕 스타일의 원본은 browser/renderer 하나 — 여기서는 불러오기만 한다 */
+@import "../../../browser/renderer/src/index.css";
