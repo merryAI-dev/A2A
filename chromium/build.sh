@@ -8,6 +8,9 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SRC="${CHROMIUM_SRC:-$HOME/dev/chromium/src}"
 OUT="${A2A_OUT:-out/A2A}"
 export PATH="${DEPOT_TOOLS:-$HOME/dev/depot_tools}:$PATH"
+# node@22는 Homebrew에서 keg-only라 새 맥에선 PATH에 없다 — setup-mac.sh가 설치한 것을 쓴다
+command -v brew >/dev/null && [[ -d "$(brew --prefix node@22 2>/dev/null)/bin" ]] && export PATH="$(brew --prefix node@22)/bin:$PATH"
+command -v npm >/dev/null || { echo "node/npm이 없습니다 — ./setup-mac.sh를 먼저 돌리세요"; exit 1; }
 
 # 0) Chromium 버전 — 패치는 chromium/REVISION에 맞춰 만든다. 다르면 패치가 안 맞을 수 있다고 알린다
 WANT="$(head -1 "$ROOT/chromium/REVISION")"

@@ -88,6 +88,7 @@ put CHAT_FANOUT "redis"
 put CHAT_REDIS_URL "redis://127.0.0.1:6379/0"
 put CHAT_ARCHIVE_DIR "$ROOT/data/archive"
 put CHAT_MOVE_INLINE "0"
+put A2A_DEV_LLM_PROXY "1"   # A2A 브라우저의 AI 기능이 엔진을 거쳐 모델을 부른다(키는 이 .env에만, 127.0.0.1 전용)
 if has ANTHROPIC_API_KEY && [[ -n "$(grep -E '^ANTHROPIC_API_KEY=' "$ENV" | cut -d= -f2-)" ]]; then ok "ANTHROPIC_API_KEY (있음)"; elif (( CHECK )); then plan "ANTHROPIC_API_KEY 입력 받음"; else
   K=""; ask_in -s -p "  ANTHROPIC_API_KEY (입력이 화면에 안 보여요, 엔터=나중에): " K || K=""; echo
   sed -i '' '/^ANTHROPIC_API_KEY=/d' "$ENV"; printf 'ANTHROPIC_API_KEY=%s\n' "$K" >> "$ENV"

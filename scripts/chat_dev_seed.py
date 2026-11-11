@@ -58,8 +58,9 @@ def main():
     platform.add_admin(None, a.admin, mail(a.admin), "superadmin")
     platform.add_admin(a.admin, "ops", mail("ops"), "operator")
 
-    t = ensure_tenant("test", "TEST", a.admin,
-                      [("alice", "admin"), ("bob", "member"), ("carol", "member")],
+    # boram은 A2A 브라우저의 기본 개발용 계정(browser-ext/src/sw/config.js) — 관리자가 다른 이름이어도 들어가 있어야 한다
+    members = [("alice", "admin"), ("bob", "member"), ("carol", "member")] + ([("boram", "member")] if a.admin != "boram" else [])
+    t = ensure_tenant("test", "TEST", a.admin, members,
                       guests=["vendor"])
     ensure_tenant("acme", "Acme Corp", "acme_ceo", [("alice", "member")])
 

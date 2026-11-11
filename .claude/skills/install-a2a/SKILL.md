@@ -66,19 +66,18 @@ cd A2A
 
 ```bash
 REV="$(head -1 ~/dev/A2A/chromium/REVISION)"
-git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git ~/dev/depot_tools   # 없으면
+[[ -d ~/dev/depot_tools ]] || git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git ~/dev/depot_tools
 export PATH="$HOME/dev/depot_tools:$PATH"
 mkdir -p ~/dev/chromium && cd ~/dev/chromium
-caffeinate -dims fetch --nohooks --no-history chromium      # 수십 GB, 1시간 안팎
-cd src
-git fetch --depth=1 origin "$REV"
-git checkout --detach FETCH_HEAD
-caffeinate -dims gclient sync -D --no-history --with_branch_heads   # 고정 버전에 맞춰 의존 저장소를 맞춘다
-gclient runhooks
-git rev-parse HEAD                                          # = $REV 인지 확인
+# fetch 대신 gclient를 직접 — fetch는 최신 main을 받은 뒤 다시 고정 버전으로 받아 두 번 받게 된다
+gclient config --name src --unmanaged https://chromium.googlesource.com/chromium/src.git
+caffeinate -dims gclient sync --nohooks --no-history --revision "src@$REV"   # 수십 GB, 1시간 안팎
+caffeinate -dims gclient runhooks
+git -C src rev-parse HEAD                                   # = $REV 인지 확인
 ```
 
-- 오래 걸리는 명령은 백그라운드로 돌리고 끝날 때까지 기다린다. 중간에 끊기면 같은 명령을 다시 돌리면 이어진다(`fetch`가 "already exists"로 멈추면 `cd src && gclient sync ...`부터).
+- 오래 걸리는 명령은 백그라운드로 돌리고 끝날 때까지 기다린다. 중간에 끊기면 같은 `gclient sync` 명령을 다시 돌리면 이어진다.
+- `git -C src rev-parse HEAD`가 `$REV`와 다르면 `cd src && git fetch --depth=1 origin "$REV" && git checkout --detach FETCH_HEAD && cd .. && gclient sync --nohooks --no-history --revision "src@$REV"`로 맞춘다.
 - 다른 경로에 받았으면 이후 `CHROMIUM_SRC=<그 경로>/src`를 붙인다.
 
 ## 4. A2A 브라우저 빌드
@@ -106,7 +105,9 @@ open ~/dev/chromium/src/out/A2A/Chromium.app
 
 `./run-mac.sh`(인자 없이)는 예전 Electron 앱을 띄운다 — A2A 브라우저에는 `--backend`만 쓴다.
 
-브라우저를 처음 열면 개발용 계정을 고르는 창이 뜬다(boram·alice·bob·carol·acme_ceo). 엔진 허용 목록(`.env`의 `SAAS_ALLOWED_USERS`)에 그 이름이 있어야 한다 — setup이 모두 넣는다. 고른 계정이 403을 받으면 그 이름을 목록에 더하고 엔진을 다시 띄운다.
+브라우저는 개발용 계정 `boram`으로 시작한다(옆 패널 위쪽 워크스페이스 단추로 alice·bob·carol·acme_ceo로 바꿀 수 있다). setup이 이 계정들을 엔진 허용 목록(`.env`의 `SAAS_ALLOWED_USERS`)과 팀 채팅 워크스페이스 TEST에 넣는다. 403이 나면 그 이름이 목록에 있는지 보고, 넣은 뒤 엔진을 다시 띄운다.
+
+AI 기능(에이전트·메리)은 엔진이 `.env`의 키로 모델을 부른다(`A2A_DEV_LLM_PROXY=1`, setup이 넣음). 키를 브라우저에 넣을 필요는 없다.
 
 ## 6. 됐는지 확인
 
