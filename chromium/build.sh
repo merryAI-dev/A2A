@@ -9,6 +9,11 @@ SRC="${CHROMIUM_SRC:-$HOME/dev/chromium/src}"
 OUT="${A2A_OUT:-out/A2A}"
 export PATH="${DEPOT_TOOLS:-$HOME/dev/depot_tools}:$PATH"
 
+# 0) Chromium 버전 — 패치는 chromium/REVISION에 맞춰 만든다. 다르면 패치가 안 맞을 수 있다고 알린다
+WANT="$(head -1 "$ROOT/chromium/REVISION")"
+HAVE="$(git -C "$SRC" rev-parse HEAD 2>/dev/null || echo none)"
+[[ "$HAVE" == "$WANT" ]] || echo "⚠ Chromium 소스가 고정 버전과 다릅니다(소스 ${HAVE:0:10}, 고정 ${WANT:0:10}) — 패치가 안 맞으면 고정 버전으로 맞추세요"
+
 # 1) 패치 — 이미 들어 있으면 건너뛴다(새 Chromium으로 올렸을 때 안 맞으면 여기서 멈춘다)
 for p in "$ROOT"/chromium/patches/*.patch; do
   if git -C "$SRC" apply --reverse --check "$p" 2>/dev/null; then echo "✓ 패치 적용됨: ${p:t}"
@@ -16,6 +21,7 @@ for p in "$ROOT"/chromium/patches/*.patch; do
 done
 
 # 2) 내장 확장 — browser-ext를 빌드해 //a2a/extension 으로
+[[ -d "$ROOT/browser-ext/node_modules" ]] || ( cd "$ROOT/browser-ext" && npm ci --no-audit --no-fund >/dev/null )
 ( cd "$ROOT/browser-ext" && npm run build >/dev/null )
 mkdir -p "$SRC/a2a"
 rsync -a --delete "$ROOT/browser-ext/dist/" "$SRC/a2a/extension/"
@@ -29,7 +35,7 @@ echo "✓ 틀 색 → //a2a/a2a_colors.h"
 
 # 4) 빌드
 cd "$SRC"
-[[ -f "$OUT/args.gn" ]] || { echo "먼저 $OUT/args.gn을 만드세요 (browser/CHROMIUM_PLAN.md)"; exit 1; }
+[[ -f "$OUT/args.gn" ]] || { mkdir -p "$OUT" && cp "$ROOT/chromium/args.gn" "$OUT/args.gn" && echo "✓ 빌드 설정 → $OUT/args.gn"; }
 gn gen "$OUT" >/dev/null
 caffeinate -dims autoninja -j "${A2A_JOBS:-8}" -C "$OUT" chrome
 echo "✓ $SRC/$OUT/Chromium.app"

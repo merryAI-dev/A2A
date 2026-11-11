@@ -80,7 +80,7 @@ put A2A_TENANT "test"
 put SAAS_AUTH "dev"
 put SAAS_STORE "local"
 put SAAS_DB_PATH "$ROOT/data/saas.db"
-put SAAS_ALLOWED_USERS "$ME,alice,bob,carol,vendor,ops,acme_ceo"
+put SAAS_ALLOWED_USERS "$ME,boram,alice,bob,carol,vendor,ops,acme_ceo"   # boram 등은 A2A 브라우저의 개발용 계정(browser-ext/src/sw/config.js devUsers)
 put CHAT_CONTROL_DSN "postgresql://$PGU@127.0.0.1:5432/${DBP}_control"
 put DEV_CELL_A "postgresql://$PGU@127.0.0.1:5432/${DBP}_cell_a"
 put DEV_CELL_B "postgresql://$PGU@127.0.0.1:5432/${DBP}_cell_b"
@@ -103,6 +103,8 @@ if (( CHECK )); then plan ".venv/bin/python scripts/chat_dev_seed.py --admin $ME
 fi
 say "브라우저 (browser/)"
 run bash -c "cd browser && npm ci --no-audit --no-fund && npx vite build"
+run bash -c "cd browser-ext && npm ci --no-audit --no-fund"
+run ./scripts/fetch_osquery.sh
 ok "npm 설치·빌드"
 
 say "끝 — 실행: ./run-mac.sh"
