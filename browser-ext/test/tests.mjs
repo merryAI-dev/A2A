@@ -800,7 +800,12 @@ test('n24-merry-answers-freight-question', async ({ cdp, EXT, Page, swEval }) =>
   const id = await p.eval(`(async () => {
     const d = await window.a2a.invoke('invest:call', 'create', { company: '운송비시험' });
     window.__f = { idle: 0 };
-    window.a2a.on('invest:progress', (e) => { if (e.dealId === d.id && e.type === 'idle') window.__f.idle++; });
+    window.a2a.on('invest:progress', (e) => {
+      if (e.dealId !== d.id) return;
+      if (e.type === 'idle') window.__f.idle++;
+      // 1년 물량 질문은 건너뛴다 — 이 시험은 시세 답만 본다(물량 프로젝션은 n25)
+      if (e.type === 'ask') window.a2a.invoke('invest:call', 'answer', d.id, e.msgId, { skip: true });
+    });
     await window.a2a.invoke('invest:call', 'say', d.id, '이거 이탈리아나 스페인에 팔려면 지금 대략 운송비가 얼마나 들지?');
     return d.id;
   })()`);
@@ -817,6 +822,49 @@ test('n24-merry-answers-freight-question', async ({ cdp, EXT, Page, swEval }) =>
       && facts.map((f) => f.key).sort().join() === 'freight_kmdi,freight_knei' && facts.every((f) => (f.url || '').includes('kobc.or.kr') && f.unit === 'USD/FEU' && /^\d{4}-/.test(f.period))
       && said.some((t) => t.includes('이미 근거 탭에 있어요')),
     first: first.slice(0, 600), facts: facts.map((f) => `${f.key}=${f.value} ${f.period}`) };
+});
+// 메리에게 운임을 물으면: 1년 물량을 묻고(고르면 결정으로) → 엔진의 1년 운송비 범위로 답하고 → 옆 칸에 운임 화면이 같은 조건으로 채워진다
+test('n25-merry-freight-projection-fills-the-screen-real', async ({ cdp, EXT, Page, swEval, sleep }) => {
+  const stale = await swEval(cdp, "chrome.tabs.query({}).then((x) => x.filter((t) => /\\/(merry|freight)\\.html/.test(t.url || t.pendingUrl || '')).map((t) => t.id))");
+  if (stale.length) await swEval(cdp, `chrome.tabs.remove(${JSON.stringify(stale)})`);
+  const p = await Page.open(cdp, `${EXT}/merry.html`);
+  await p.waitFor('!!window.a2a');
+  if (process.env.A2A_ENGINE) await swEval(cdp, `globalThis.a2a.engineAt(${JSON.stringify(process.env.A2A_ENGINE)})`);
+  const id = await p.eval(`(async () => {
+    const d = await window.a2a.invoke('invest:call', 'create', { company: '1년운송비시험' });
+    window.__g = { idle: 0, asked: 0 };
+    window.a2a.on('invest:progress', (e) => {
+      if (e.dealId !== d.id) return;
+      if (e.type === 'idle') window.__g.idle++;
+      if (e.type === 'ask') { window.__g.asked++; window.a2a.invoke('invest:call', 'answer', d.id, e.msgId, { choice: '월 2대' }); }
+    });
+    await window.a2a.invoke('invest:call', 'say', d.id, '이거 이탈리아로 수출하려면 운임이 얼마지?');
+    return d.id;
+  })()`);
+  await p.waitFor('window.__g.idle >= 1', 90000).catch(() => null);
+  const v = await p.eval(`window.a2a.invoke('invest:call', 'deal', ${JSON.stringify(id)})`);
+  const said = v.chat.filter((m) => m.role === 'merry' && m.kind === 'msg').map((m) => m.text).find((t) => t.includes('1년 운송비')) || '';
+  const decided = (v.deal.decisions || []).some((x) => x.topic.includes('연간 물량') && x.chosen === '월 2대');
+  // 옆 칸의 해상 운임 화면 — 같은 조건으로 1년 운송비가 그려졌나
+  let shot = null;
+  for (let i = 0; i < 20 && !shot; i++) {
+    await sleep(500);
+    const t = await swEval(cdp, "chrome.tabs.query({}).then((x) => x.find((t) => (t.url || t.pendingUrl || '').includes('/freight.html?')))");
+    if (t) shot = t;
+  }
+  const merryTab = await swEval(cdp, "chrome.tabs.query({}).then((x) => x.find((t) => (t.url || '').endsWith('/merry.html')))");
+  let screen = null;
+  if (shot) {
+    const f = await Page.attachUrl(cdp, '/freight.html?').catch(() => null);
+    if (f) {
+      screen = await f.waitFor("document.querySelector('#freight-projection')?.dataset.status === 'ok' && document.querySelector('#freight-projection-now')?.innerText", 60000).catch(() => null);
+      await f.shot('n25-freight-projection.png', { width: 1200, height: 900 }).catch(() => {});
+    }
+  }
+  await p.close();
+  return { ok: !!said && /1년 운송비\(한 달 2대 → 1년 24대, 40피트\): 지금 시세면 \$[\d,]+/.test(said) && decided && !!shot
+      && merryTab?.splitViewId === shot?.splitViewId && merryTab?.splitViewId !== -1 && /^\$[\d,]+$/.test(String(screen || '')),
+    said: said.slice(0, 500), decided, url: shot?.url, screen, split: [merryTab?.splitViewId, shot?.splitViewId] };
 });
 // 운임 문의 답장의 사실표 — 숫자·기준일·출처가 엔진 결과에서 그대로 오고, 견적가는 언제나 모르는 칸인지(글쓰기 모델 없이 확인)
 test('n23-freight-reply-facts-come-from-the-engine', async ({ cdp, EXT, Page, swEval }) => {

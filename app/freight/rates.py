@@ -279,6 +279,72 @@ def board(*, client: "httpx.Client | None" = None, today: "date | None" = None, 
             "lanes": [_lane(c, table, today) for c in LANES if c in table["codes"]]}
 
 
+# ── 연간 물량 프로젝션 ──────────────────────────────────────────────────
+# 미래 운임은 아무도 모른다. 그래서 "얼마가 들까"를 숫자 하나로 말하지 않고, 지난 52주 지수에서 뽑은
+# 네 가지 경우(지금 시세 유지·52주 평균·52주 최저·52주 최고)에 연간 물량을 곱해 범위로 보여 준다.
+# 지수가 40피트 일반 컨테이너(FEU) 값이라 40피트만 계산한다 — 20피트를 반으로 나누는 추정은 하지 않는다.
+PROJECTION_WEEKS = 52
+PER_YEAR = {"year": 1, "half": 2, "quarter": 4, "month": 12, "week": 52}
+PER_KO = {"year": "1년", "half": "반년", "quarter": "분기", "month": "한 달", "week": "한 주"}
+_PERIOD = [("half", r"반기|반년|6\s*개월"), ("quarter", r"분기|3\s*개월|quarter"),
+           ("month", r"매\s*달|매\s*월|한\s*달|월\s*(?:간|에|당|마다)?|monthly|per\s*month|a\s*month|/\s*월|/\s*mo"),
+           ("week", r"매\s*주|주\s*(?:당|마다|에)|weekly|per\s*week|a\s*week|/\s*주"),
+           ("year", r"연\s*(?:간|에|당|마다)?|1\s*년|일\s*년|한\s*해|매\s*년|년\s*(?:간|에|당|마다)|yearly|annual(?:ly)?|per\s*year|a\s*year|/\s*년|/\s*yr")]
+_COUNT = re.compile(r"(\d+(?:\.\d+)?)\s*(?:(20|40)\s*(?:피트|ft|')\s*)?(?:HC|하이큐브)?\s*"
+                    r"(대|개|컨테이너|박스|FEU|TEU|box(?:es)?|containers?)", re.I)
+
+
+def volume_in(text: str) -> "dict | None":
+    """문장 속 물량 — "월 2대", "1년에 40피트 24개", "연간 30 FEU". 기간이 없으면 per=None(계산하지 않고 묻는다)."""
+    t = str(text or "")
+    m = _COUNT.search(t)
+    if not m:
+        return None
+    count = float(m.group(1))
+    if count <= 0 or count > 100_000:
+        return None
+    unit = m.group(3).upper()
+    near = t[max(0, m.start() - 14):m.start()] + " " + t[m.end():m.end() + 10]
+    size = "20" if (m.group(2) == "20" or unit == "TEU" or re.search(r"20\s*(피트|ft|')", near, re.I)) else "40"
+    if size == "40" and re.search(r"HC|하이큐브|high\s*cube", t[max(0, m.start() - 14):m.end() + 10], re.I):
+        size = "40HC"
+    per = next((k for k, rx in _PERIOD if re.search(rx, near, re.I)), None)
+    return {"count": int(count) if count.is_integer() else count, "per": per, "size": size, "text": m.group(0).strip()}
+
+
+def projection(lane: dict, count: float, per: str, size: str = "40") -> dict:
+    """항로 하나(52주 history 포함)에 연간 물량을 곱한 네 가지 경우. 계산을 그대로 보여 준다(값마다 식)."""
+    if per not in PER_YEAR:
+        return {"status": "need_period", "reason": "기간(월·연 등)이 없어 1년 물량을 정할 수 없습니다 — 예: 월 2대, 1년에 24대"}
+    if str(size).upper() in ("20", "20FT", "TEU"):
+        return {"status": "unknown", "reason": "20피트 운임은 이 지수에 없습니다 — 40피트 값을 나눠 추정하지 않습니다. 40피트 대수로 알려 주시면 계산합니다"}
+    if lane.get("usd_per_feu") is None:
+        return {"status": "unknown", "reason": lane.get("note") or "이 항로 값이 없습니다"}
+    per_year = round(count * PER_YEAR[per], 2)
+    vals = [p["value"] for p in lane.get("history") or []] or [lane["usd_per_feu"]]
+    rate = {"now": lane["usd_per_feu"], "avg": round(sum(vals) / len(vals)), "low": min(vals), "high": max(vals)}
+    label = {"now": f"지금 시세 유지({lane['as_of']})", "avg": f"지난 {len(vals)}주 평균",
+             "low": f"지난 {len(vals)}주 최저", "high": f"지난 {len(vals)}주 최고"}
+    cases = [{"key": k, "label": label[k], "usd_per_feu": rate[k], "annual_usd": round(rate[k] * per_year),
+              "formula": f"{rate[k]:,.0f} × {per_year:g}대"} for k in ("now", "avg", "low", "high")]
+    notes = ["지수(항로 평균 시세)로 계산한 범위이며 견적이 아닙니다 — 부대비용·내륙 운송·통관·보험은 빠져 있습니다"]
+    if str(size).upper() != "40":
+        notes.append(f"요청 규격 {size}의 값은 이 지수에 없어 40피트 일반 컨테이너 시세로 계산했습니다")
+    return {"status": "ok", "count": count, "per": per, "per_ko": PER_KO[per], "per_year": per_year, "size": "40",
+            "weeks": len(vals), "from": lane["range"]["from"], "to": lane["range"]["to"], "cases": cases,
+            "monthly_now_usd": round(rate["now"] * per_year / 12), "notes": notes}
+
+
+def project(origin: str, destination: str, count: float, per: str, container: str = "40", cargo: str = "", *,
+            client: "httpx.Client | None" = None, today: "date | None" = None) -> dict:
+    """estimate(52주) + 항로마다 연간 물량 프로젝션. 화면·메리·에이전트가 같은 계산을 쓴다."""
+    out = estimate(origin, destination, container, cargo, client=client, today=today, weeks=PROJECTION_WEEKS)
+    out["volume"] = {"count": count, "per": per, "size": str(container or "40")}
+    for lane in out.get("lanes") or []:
+        lane["projection"] = projection(lane, count, per, str(container or "40"))
+    return out
+
+
 # 문장 속 도착지 — 메리 대화처럼 사람이 쓴 말("이탈리아나 스페인에 팔려면")에서 이름표에 있는 곳만 줍는다.
 # 이름표에 없는 곳은 줍지 않는다(지어내지 않는다). 한국 이름은 출발지로 보고 빼며, 같은 나라는 한 번만.
 def places_in(text: str) -> list[dict]:
@@ -319,6 +385,10 @@ def ask(text: str, *, origin: str = "KR", container: str = "40", cargo: str = ""
             label.setdefault(v, k)
     dests = [label.get(c, c) for c in places_in(text)]
     named_origin = bool(re.search(r"(부산|인천|광양|busan|pusan)\S{0,3}(에서|발|from)", str(text), re.I))
+    vol = volume_in(text)
+    if vol and vol["per"]:
+        results = [project(origin, d, vol["count"], vol["per"], vol["size"], cargo, client=client, today=today) for d in dests]
+    else:
+        results = [estimate(origin, d, container, cargo, client=client, today=today, weeks=weeks) for d in dests]
     return {"kind": "index", "unit": UNIT, "question": str(text or "")[:400], "destinations": dests,
-            "origin": origin, "origin_assumed": not named_origin,
-            "results": [estimate(origin, d, container, cargo, client=client, today=today, weeks=weeks) for d in dests]}
+            "origin": origin, "origin_assumed": not named_origin, "volume": vol, "results": results}

@@ -202,3 +202,41 @@ def test_providers_never_claim_a_connection_they_do_not_have(monkeypatch):
     monkeypatch.setenv("MAERSK_CONSUMER_KEY", "x")
     m = next(p for p in cmp.providers() if p["id"] == "maersk")
     assert m["status"] == "key_present" and "env" not in m      # 키가 있어도 어댑터 전엔 연결됐다고 하지 않는다
+
+
+# ── 연간 물량 프로젝션 ──
+def test_volume_is_read_from_a_sentence():
+    v = rates.volume_in
+    assert v("월 2대씩 보내면") == {"count": 2, "per": "month", "size": "40", "text": "2대"}
+    assert v("1년에 40피트 24개") ["per"] == "year" and v("1년에 40피트 24개")["count"] == 24
+    assert v("연간 30 FEU")["per"] == "year"
+    assert v("매주 1컨테이너")["per"] == "week"
+    assert v("분기마다 6대")["per"] == "quarter"
+    assert v("20피트 10대 매달")["size"] == "20"
+    assert v("40HC 3대 월")["size"] == "40HC"
+    assert v("3대 보내면 얼마?")["per"] is None          # 기간이 없으면 정하지 않는다
+    assert v("이탈리아 운임 얼마야") is None and v("2026년 매출") is None
+
+
+def test_projection_shows_four_cases_with_their_formula():
+    out = rates.project("KR", "이탈리아", 2, "month", client=client(), today=TODAY)
+    p = out["lanes"][0]["projection"]
+    assert p["status"] == "ok" and p["per_year"] == 24 and p["weeks"] == 3
+    got = {c["key"]: (c["usd_per_feu"], c["annual_usd"]) for c in p["cases"]}
+    assert got == {"now": (4177, 4177 * 24), "avg": (4034, 4034 * 24), "low": (3945, 3945 * 24), "high": (4177, 4177 * 24)}
+    assert p["cases"][0]["formula"] == "4,177 × 24대" and p["monthly_now_usd"] == round(4177 * 24 / 12)
+    assert any("견적이 아닙니다" in n for n in p["notes"])
+
+
+def test_projection_never_halves_forty_foot_for_twenty_foot():
+    out = rates.project("KR", "IT", 10, "month", "20", client=client(), today=TODAY)
+    p = out["lanes"][0]["projection"]
+    assert p["status"] == "unknown" and "cases" not in p and "나눠 추정하지 않습니다" in p["reason"]
+
+
+def test_ask_projects_when_the_question_has_a_volume():
+    a = rates.ask("이탈리아로 월 2대 수출하면 1년 운송비가 얼마야?", client=client(), today=TODAY)
+    assert a["volume"]["count"] == 2 and a["volume"]["per"] == "month"
+    assert a["results"][0]["lanes"][0]["projection"]["per_year"] == 24
+    plain = rates.ask("이탈리아 운임 얼마야", client=client(), today=TODAY)
+    assert plain["volume"] is None and "projection" not in plain["results"][0]["lanes"][0]

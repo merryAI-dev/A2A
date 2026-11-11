@@ -68,6 +68,16 @@ export class Page {
     await p.cdp.send('Runtime.enable', {}, sessionId);
     return p;
   }
+  // 이미 열린 탭(예: 확장이 옆 칸에 연 화면)에 붙는다 — 주소 일부로 찾는다
+  static async attachUrl(cdp, part) {
+    const { targetInfos } = await cdp.send('Target.getTargets');
+    const t = targetInfos.find((x) => x.type === 'page' && x.url.includes(part));
+    if (!t) return null;
+    const { sessionId } = await cdp.send('Target.attachToTarget', { targetId: t.targetId, flatten: true });
+    const p = new Page(cdp, t.targetId, sessionId);
+    await p.cdp.send('Runtime.enable', {}, sessionId);
+    return p;
+  }
   async eval(expr) {
     const r = await this.cdp.send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true }, this.sessionId);
     if (r.exceptionDetails) throw new Error(r.exceptionDetails.exception?.description || r.exceptionDetails.text);

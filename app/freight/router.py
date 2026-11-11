@@ -31,6 +31,21 @@ def ocean(body: OceanIn, user: SaasUser = Depends(current_user)):
     return rates.estimate(body.origin, body.destination, body.container, body.cargo, weeks=body.weeks)
 
 
+class ProjectIn(BaseModel):
+    origin: str = Field(default="KR", min_length=1, max_length=80)
+    destination: str = Field(min_length=1, max_length=80)
+    count: float = Field(gt=0, le=100_000)               # 기간당 컨테이너 대수
+    per: str = Field(default="year", pattern="^(year|half|quarter|month|week)$")
+    container: str = Field(default="40", max_length=20)
+    cargo: str = Field(default="", max_length=120)
+
+
+@router.post("/ocean/project")
+def project(body: ProjectIn, user: SaasUser = Depends(current_user)):
+    """연간 물량 프로젝션 — 지난 52주 지수의 네 가지 경우(지금·평균·최저·최고) × 1년 대수."""
+    return rates.project(body.origin, body.destination, body.count, body.per, body.container, body.cargo)
+
+
 @router.post("/ocean/compare")
 def compare_routes(body: OceanIn, user: SaasUser = Depends(current_user)):
     return compare.compare(body.origin, body.destination, body.container, body.cargo, weeks=body.weeks)

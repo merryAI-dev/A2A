@@ -17,6 +17,7 @@ import { createSync, MODES as SYNC_MODES } from '../../../browser/sync.js';
 import { loadSafeStorage } from '../shim/electron.js';
 import { readFileSync } from '../shim/fs.js';
 import { CFG } from './config.js';
+import { openBeside, pageTab } from './split.js';
 import { handle, broadcast, on } from './hub.js';
 import { store, llmKey, runtime, loadStore, saveStore, pushState, profile, checkEngineLLM } from './state.js';
 
@@ -97,6 +98,12 @@ export async function attach(d) {
       delegate: (text) => d.delegate(text),
       // 해상 운임 — 에이전트·해상 운임 화면과 같은 엔진 경로(app/freight). 메리가 운송비를 물으면 쓴다
       freight: (text, opts) => d.freight(text, opts),
+      // 해상 운임 화면을 메리 옆 칸(분할 뷰)에 열어 같은 질문으로 채운다 — 대화는 답, 화면은 표·그래프
+      showFreight: async (q = {}) => {
+        const p = new URLSearchParams();
+        for (const k of ['to', 'n', 'per', 'size', 'cargo']) if (q[k] != null && q[k] !== '') p.set(k, String(q[k]).slice(0, 80));
+        await openBeside(await pageTab('merry.html'), chrome.runtime.getURL(`freight.html?${p}`));
+      },
       // 맡긴 작업이 읽은 웹 페이지 — 근거로 가져온다(Electron main.js와 같다)
       reads: (taskId) => {
         const raw = onto.raw();

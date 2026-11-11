@@ -10,6 +10,7 @@ import { agentChat } from './chat.js';
 import { pageMarkdown } from '../ui/format.js';
 import { attach, collect, baseModel, knowledge } from './knowledge.js';
 import { wcOf, onNewTab, adoptOpenTabs } from './webcontents.js';
+import { openBeside } from './split.js';
 import { MODELS } from '../../../browser/harness.js';
 
 let agent = null;
@@ -507,6 +508,13 @@ function freightText(d) {
     lines.push(`포함 안 됨: ${(d.not_included || []).join(', ')}`);
     lines.push(`출처: ${d.source.publisher} ${d.source.name} · ${d.source.cadence} · ${d.source.url} · 가져온 시각 ${d.source.fetched_at || ''}`);
   }
+  for (const l of d.lanes || []) {
+    const p = l.projection;
+    if (!p) continue;
+    if (p.status !== 'ok') { lines.push(`1년 운송비(${l.name_ko}): 계산 안 함 — ${p.reason}`); continue; }
+    lines.push(`1년 운송비(${l.name_ko}, ${p.per_ko} ${p.count}대 → 1년 ${p.per_year}대, 40피트, 지난 ${p.weeks}주 지수 기준): `
+      + p.cases.map((c) => `${c.label} ${usd(c.annual_usd)}(${c.formula})`).join(' · '));
+  }
   for (const n of d.notes || []) lines.push(`주의: ${n}`);
   return lines.join('\n');
 }
@@ -514,7 +522,11 @@ async function oceanFreight(input) {
   const body = { origin: String(input.origin || '').slice(0, 80), destination: String(input.destination || '').slice(0, 80),
                  container: String(input.container || '40').slice(0, 20), cargo: String(input.cargo || '').slice(0, 120) };
   if (Number.isInteger(input.weeks)) body.weeks = input.weeks;
-  const r = await fetch(`${CFG.engine}/v1/freight/ocean`, {
+  // 물량이 있으면 1년 운송비 프로젝션까지(엔진이 계산) — 화면도 같은 조건으로 연다
+  const count = Number(input.count), per = ['year', 'half', 'quarter', 'month', 'week'].includes(input.per) ? input.per : null;
+  const projecting = count > 0 && per;
+  if (projecting) Object.assign(body, { origin: body.origin || 'KR', count: Math.min(count, 100000), per });
+  const r = await fetch(`${CFG.engine}/v1/freight/ocean${projecting ? '/project' : ''}`, {
     method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Dev-User': profile().user },
     body: JSON.stringify(body),
   });
@@ -522,6 +534,11 @@ async function oceanFreight(input) {
   if (!r.ok) throw new Error(d.error?.message || `엔진 응답 ${r.status}`);
   const text = freightText(d);
   collect.agentToolResult({ platform: 'a2a-engine', tool: 'ocean_freight_rate', input: body, text, sourceUrl: d.source?.url || '' });
+  if (input.show && d.status !== 'unknown') {
+    const q = new URLSearchParams({ to: body.destination, size: body.container, ...(projecting ? { n: String(body.count), per } : {}) });
+    const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    await openBeside(tab || null, chrome.runtime.getURL(`freight.html?${q}`)).catch(() => {});
+  }
   return { d, text };
 }
 handle('freight:ocean', async (input) => {
@@ -546,6 +563,15 @@ handle('freight:compare', async (input) => {
   const body = { origin: String(input?.origin || '').slice(0, 80), destination: String(input?.destination || '').slice(0, 80),
                  container: String(input?.container || '40').slice(0, 20), cargo: String(input?.cargo || '').slice(0, 120) };
   return engineJson('/v1/freight/ocean/compare', { method: 'POST', body: JSON.stringify(body) });
+});
+// 연간 물량 프로젝션 — 지난 52주 지수의 네 가지 경우 × 1년 대수(엔진이 계산, 화면은 그리기만)
+handle('freight:project', async (input) => {
+  await loadStore();
+  const per = ['year', 'half', 'quarter', 'month', 'week'].includes(input?.per) ? input.per : 'year';
+  const body = { origin: String(input?.origin || 'KR').slice(0, 80), destination: String(input?.destination || '').slice(0, 80),
+                 count: Math.max(0.01, Math.min(100000, Number(input?.count) || 1)), per,
+                 container: String(input?.container || '40').slice(0, 20), cargo: String(input?.cargo || '').slice(0, 120) };
+  return engineJson('/v1/freight/ocean/project', { method: 'POST', body: JSON.stringify(body) });
 });
 // 사람이 쓴 질문 한 문장(메리 대화 등) → 문장 속 도착지마다 운임. 결과 원문은 근거(derived_from)로 남는다
 export async function freightAsk(text, { cargo = '' } = {}) {

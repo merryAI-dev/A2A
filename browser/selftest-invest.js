@@ -313,7 +313,8 @@ const ok = (name, fn) => { try { fn(); results.push(`✓ ${name}`); } catch (e) 
         { status: 'ambiguous', destination: { input: '스페인' }, lanes: [lane('KMDI', '지중해', 4177), lane('KNEI', '북유럽', 3537)], source, not_included: ['내륙 운송'] },
       ] }; } };
     const cp6 = createCopilot({ room, pipe: {}, bridge: bridge6, send: () => {} });
-    const idle = async (id) => { for (let i = 0; i < 300 && (cp6.state(id).busy || !i); i++) await new Promise((r) => setTimeout(r, 5)); };
+    // 물량 질문은 건너뛴다(이 묶음은 시세 답만 본다 — 물량 프로젝션은 아래 묶음)
+    const idle = async (id) => { for (let i = 0; i < 300 && (cp6.state(id).busy || !i); i++) { const w = cp6.state(id).waiting[0]; if (w) cp6.answer(id, w, { skip: true }); await new Promise((r) => setTimeout(r, 5)); } };
     const f = room.create({ company: '운송비' });
     cp6.user(f.id, '이거 이탈리아나 스페인에 팔려면 지금 대략 운송비가 얼마나 들지?');
     await idle(f.id);
@@ -345,6 +346,43 @@ const ok = (name, fn) => { try { fn(); results.push(`✓ ${name}`); } catch (e) 
     ok('운송비: 운임 연결이 없는 곳(Electron 등)에선 이 흐름을 타지 않고 평소 답으로', () => {
       assert.equal(asked.length, 3);
       assert.equal(room.chat(g.id).filter((m) => m.role === 'merry' && m.kind === 'msg').at(-1).text, '일반 답');
+    });
+
+    // 1년 운송비 — 물량이 없으면 묻고(결정으로 남김), 엔진의 프로젝션을 그대로 옮기며, 옆 칸에 운임 화면을 연다
+    const proj = { status: 'ok', count: 2, per: 'month', per_ko: '한 달', per_year: 24, size: '40', weeks: 52, cases: [
+      { key: 'now', annual_usd: 100248, formula: '4,177 × 24대' }, { key: 'avg', annual_usd: 96000, formula: '4,000 × 24대' },
+      { key: 'low', annual_usd: 72000, formula: '3,000 × 24대' }, { key: 'high', annual_usd: 120000, formula: '5,000 × 24대' }] };
+    const asked7 = [], shown = [];
+    const bridge7 = {
+      freight: async (text) => {
+        asked7.push(text);
+        const vol = /월 2대/.test(text) ? { count: 2, per: 'month', size: '40', text: '2대' } : null;
+        return { destinations: ['이탈리아'], origin_assumed: true, volume: vol, results: [
+          { status: 'ok', destination: { input: '이탈리아' }, lanes: [{ ...lane('KMDI', '지중해', 4177), ...(vol ? { projection: proj } : {}) }], source, not_included: ['내륙 운송'] }] };
+      },
+      showFreight: async (q) => { shown.push(q); },
+    };
+    const cp7 = createCopilot({ room, pipe: {}, bridge: bridge7, send: () => {} });
+    const h = room.create({ company: '1년운송비' });
+    const settle7 = async (choice) => { for (let i = 0; i < 300 && (cp7.state(h.id).busy || !i); i++) { const w = cp7.state(h.id).waiting[0]; if (w) cp7.answer(h.id, w, { choice }); await new Promise((r) => setTimeout(r, 5)); } };
+    cp7.user(h.id, '이거 이탈리아로 수출하려면 운임이 얼마지?');
+    await settle7('월 2대');
+    const said7 = room.chat(h.id).filter((m) => m.role === 'merry' && m.kind === 'msg').map((m) => m.text).at(-1);
+    ok('1년 운송비: 물량이 없으면 묻고, 고른 물량은 결정으로 남는다', () => {
+      assert.ok(room.chat(h.id).some((m) => m.kind === 'ask' && /40피트 컨테이너를 얼마나/.test(m.text)));
+      assert.deepEqual(asked7, ['이거 이탈리아로 수출하려면 운임이 얼마지?', '이거 이탈리아로 수출하려면 운임이 얼마지? 월 2대']);
+      assert.ok(room.get(h.id).decisions.some((x) => x.topic === '운송비 계산에 쓸 연간 물량(40피트)' && x.chosen === '월 2대'));
+    });
+    ok('1년 운송비: 엔진이 계산한 범위를 식과 함께 그대로 옮기고, 옆 칸에 같은 조건의 운임 화면을 연다', () => {
+      assert.match(said7, /1년 운송비\(한 달 2대 → 1년 24대, 40피트\): 지금 시세면 \$100,248\(4,177 × 24대\), 지난 52주 평균이면 \$96,000 — 범위 \$72,000~\$120,000/);
+      assert.deepEqual(shown, [{ to: '이탈리아', n: 2, per: 'month', size: '40' }]);
+      assert.match(said7, /옆 칸에 해상 운임 화면을 열어/);
+    });
+    cp7.user(h.id, '미국으로 보내도 운임이 얼마야?');
+    await settle7('월 4대');
+    ok('1년 운송비: 한 번 정한 물량은 다시 묻지 않고 그대로 쓴다', () => {
+      assert.equal(room.chat(h.id).filter((m) => m.kind === 'ask').length, 1);
+      assert.equal(asked7.at(-1), '미국으로 보내도 운임이 얼마야? 월 2대');
     });
   }
 

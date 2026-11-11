@@ -94,9 +94,26 @@ function createCopilot({ room, pipe, frn = null, bridge = null, typeDeal = () =>
   // 운송비 — "이탈리아나 스페인에 팔려면 운송비가 얼마나?" 같은 물음. 숫자는 엔진이 공개 지수에서 읽은 그대로 쓴다(모델이 옮겨 적지 않는다).
   // 근거 탭에 출처·기준일과 함께 넣어, 보고서를 쓸 때 다른 근거처럼 인용된다. 지수이지 견적이 아니라는 말을 함께 남긴다.
   const FREIGHT_RE = /(운송비|운임|물류비|배송비|운반비|해상\s*운송|선적|컨테이너|freight|shipping)/i;
+  // 물량은 메리가 정하지 않는다 — 물음에 없으면 심사역에게 묻고, 고른 값은 결정으로 남긴다(업무 지도의 합의)
+  const VOLUME_OPTIONS = ['월 1대', '월 2대', '월 4대', '연 100대'];
+  const freightVolumeTopic = '운송비 계산에 쓸 연간 물량(40피트)';
   async function freightFlow(dealId, text) {
     stepMsg(dealId, '공개 운임 지수(한국해양진흥공사 KCCI)에서 시세를 읽는 중…');
-    const r = await bridge.freight(text, {});
+    let r = await bridge.freight(text, {});
+    const priced0 = (r.results || []).some((x) => (x.lanes || []).some((l) => l.usd_per_feu != null));
+    if (priced0 && !r.volume?.per) {
+      // 이미 정한 물량이 있으면 그대로, 없으면 묻는다
+      const prior = room.get(dealId).decisions.filter((x) => !x.supersededBy && x.topic === freightVolumeTopic).pop();
+      const v = prior?.chosen || await ask(dealId, {
+        text: `1년 운송비도 계산해 볼까요? 40피트 컨테이너를 얼마나 보낼지 정해 주세요.${r.volume?.count ? ` (말씀하신 ${r.volume.text}이(가) 한 달인지 1년인지 알려 주세요)` : ''}`,
+        options: VOLUME_OPTIONS, why: '지난 52주 지수로 1년 운송비 범위를 계산합니다(지금 시세·평균·최저·최고)', item: false });
+      if (v) {
+        if (!prior && VOLUME_OPTIONS.includes(v)) {
+          try { room.decide(dealId, { topic: freightVolumeTopic, chosen: v, rationale: '운송비 질문에 대한 심사역 판단 — 1년 운송비 범위 계산용' }); } catch (e) { stepMsg(dealId, `결정 기록 실패: ${short(e.message, 80)}`); }
+        }
+        r = await bridge.freight(`${text} ${v}`, {});
+      }
+    }
     if (!r.destinations?.length) {
       say(dealId, '어느 나라나 항구로 보낼지 알려 주시면 그 항로의 지금 운임 시세를 찾아 드릴게요(예: 이탈리아, 스페인 바르셀로나, ITGOA).');
       return;
@@ -120,6 +137,13 @@ function createCopilot({ room, pipe, frn = null, bridge = null, typeDeal = () =>
         facts.push({ key: `freight_${l.code.toLowerCase()}`, label: `해상운임 부산→${l.name_ko} (40ft)`, value: l.usd_per_feu, unit: 'USD/FEU',
                      period: l.as_of, quote, section: '', basis: 'web', url: x.source?.url });
       }
+      for (const l of priced) {
+        const p = l.projection;
+        if (!p) continue;
+        if (p.status !== 'ok') { lines.push(`   1년 운송비: 계산하지 않았어요 — ${p.reason}`); continue; }
+        const c = Object.fromEntries(p.cases.map((k) => [k.key, k]));
+        lines.push(`   1년 운송비(${p.per_ko} ${p.count}대 → 1년 ${p.per_year}대, 40피트): 지금 시세면 ${u(c.now.annual_usd)}(${c.now.formula}), 지난 ${p.weeks}주 평균이면 ${u(c.avg.annual_usd)} — 범위 ${u(c.low.annual_usd)}~${u(c.high.annual_usd)}`);
+      }
       for (const n of x.notes || []) lines.push(`   주의: ${n}`);
     }
     let added = 0;
@@ -138,6 +162,15 @@ function createCopilot({ room, pipe, frn = null, bridge = null, typeDeal = () =>
         `출처: ${src.publisher} ${src.name} · ${src.cadence} — ${src.url}`,
         added ? `근거 탭에 운임 ${added}개를 출처·기준일과 함께 넣었어요 — 보고서에 운송비를 쓰면 이 근거로 인용돼요. 기간별 추이는 '해상 운임' 화면에서 볼 수 있어요.`
           : `같은 기준일의 운임은 이미 근거 탭에 있어요. 기간별 추이는 '해상 운임' 화면에서 볼 수 있어요.`);
+    }
+    // 화면에도 — 메리 옆 칸(분할 뷰)에 해상 운임 화면을 같은 질문으로 채워 연다
+    const first = r.results.find((x) => (x.lanes || []).some((l) => l.usd_per_feu != null));
+    if (first && bridge.showFreight) {
+      const vol = r.volume?.per ? r.volume : null;
+      try {
+        await bridge.showFreight({ to: first.destination?.input, n: vol?.count, per: vol?.per, size: vol?.size });
+        out.push('옆 칸에 해상 운임 화면을 열어 같은 조건으로 채웠어요 — 추이 그래프와 1년 운송비 범위를 거기서 볼 수 있어요.');
+      } catch (e) { stepMsg(dealId, `해상 운임 화면을 열지 못했어요: ${short(e.message, 80)}`); }
     }
     say(dealId, out.join('\n'));
   }

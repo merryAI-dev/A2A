@@ -188,6 +188,51 @@ function Routes({ cmp, origin }) {
   );
 }
 
+// 1년 운송비 — 엔진이 지난 52주 지수로 계산한 네 가지 경우(지금·평균·최저·최고). 화면은 그리기만 한다.
+const PERS = [['month', '한 달'], ['quarter', '분기'], ['year', '1년'], ['week', '한 주']];
+function Projection({ data, vol, setVol }) {
+  const lane = data?.lanes?.find((l) => l.projection);
+  const p = lane?.projection;
+  const cases = p?.status === 'ok' ? p.cases : [];
+  const top = Math.max(1, ...cases.map((c) => c.annual_usd));
+  const label = { now: '지금 시세 유지', avg: '평균', low: '최저', high: '최고' };
+  return (
+    <section id="freight-projection" className="mt-6 rounded-xl px-4 py-4 ring-1 ring-card-line" data-status={p?.status || 'none'}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-[13px] font-semibold">1년 운송비 {lane && <span className="font-normal text-card-sub">· 부산 → {lane.name_ko} · 40피트</span>}</h2>
+        <div className="flex items-center gap-1.5 text-[12.5px]">
+          <select id="freight-per" value={vol.per} onChange={(e) => setVol({ ...vol, per: e.target.value })} className="h-8 rounded-lg bg-field px-2 ring-1 ring-field-line outline-none">
+            {PERS.map(([k, t]) => <option key={k} value={k}>{t}</option>)}
+          </select>
+          <input id="freight-count" type="number" min="1" max="100000" value={vol.n} onChange={(e) => setVol({ ...vol, n: e.target.value })}
+            className="h-8 w-16 rounded-lg bg-field px-2 text-right tabular-nums ring-1 ring-field-line outline-none" />
+          <span className="text-card-sub">대</span>
+        </div>
+      </div>
+      {!p && <div className="mt-3 text-[12.5px] text-card-sub">도착지를 넣고 운임을 보면, 보낼 물량으로 1년 운송비 범위를 계산해 드려요.</div>}
+      {p && p.status !== 'ok' && <div id="freight-projection-reason" className="mt-3 text-[12.5px] text-warn">{p.reason}</div>}
+      {p?.status === 'ok' && (
+        <>
+          <div className="mt-3 flex flex-wrap items-baseline gap-x-3">
+            <b id="freight-projection-now" className="text-[26px] font-bold tabular-nums">{usd(cases[0].annual_usd)}</b>
+            <span className="text-[12.5px] text-card-sub">1년 {p.per_year}대 · 지금 시세 유지 · 한 달 약 {usd(p.monthly_now_usd)}</span>
+          </div>
+          <ul className="mt-3 space-y-1.5">
+            {cases.map((c) => (
+              <li key={c.key} data-case={c.key} className="grid grid-cols-[88px_1fr_auto] items-center gap-3 text-[12.5px]">
+                <span className="text-card-sub">{label[c.key]}</span>
+                <span className="h-2 rounded-full bg-raise"><span className={`block h-2 rounded-full ${c.key === 'now' ? 'bg-card-ink' : 'bg-card-faint'}`} style={{ width: `${(c.annual_usd / top) * 100}%` }} /></span>
+                <span className="tabular-nums"><b className="font-semibold">{usd(c.annual_usd)}</b> <span className="text-[11px] text-card-faint">{c.formula}</span></span>
+              </li>
+            ))}
+          </ul>
+          <div className="mt-3 text-[11.5px] leading-relaxed text-card-sub">지난 {p.weeks}주({p.from}~{p.to}) 지수로 계산한 범위예요. 앞으로의 운임이 아니라 "이 시세가 이어지면"이에요. {p.notes.join(' ')}</div>
+        </>
+      )}
+    </section>
+  );
+}
+
 function Providers({ list }) {
   return (
     <section id="freight-providers" className="mt-8">
@@ -208,8 +253,12 @@ function Providers({ list }) {
   );
 }
 
+// 메리·에이전트가 연 화면 — 주소에 실린 조건(?to=이탈리아&n=2&per=month&size=40)으로 바로 채운다
+const Q = new URLSearchParams(location.search);
 function Freight() {
-  const [f, setF] = useState({ origin: '부산', destination: '', container: '40', cargo: '' });
+  const [f, setF] = useState({ origin: '부산', destination: Q.get('to') || '', container: Q.get('size') === '20' ? '20' : '40', cargo: Q.get('cargo') || '' });
+  const [vol, setVol] = useState({ n: Q.get('n') || '2', per: Q.get('per') || 'month' });
+  const [proj, setProj] = useState(null);
   const [weeks, setWeeks] = useState(52);
   const [board, setBoard] = useState(null);
   const [pick, setPick] = useState(['KMDI']);          // 차트에 그릴 항로
@@ -225,7 +274,7 @@ function Freight() {
   }, [weeks]);
 
   const find = async (e) => {
-    e.preventDefault();
+    e?.preventDefault();
     if (!f.destination.trim() || busy) return;
     setBusy(true); setErr(''); setOut(null);
     try {
@@ -235,6 +284,19 @@ function Freight() {
     } catch (x) { setErr(String(x.message || x)); }
     finally { setBusy(false); }
   };
+
+  // 주소로 열렸으면 한 번 스스로 찾는다
+  useEffect(() => { if (Q.get('to')) find(); }, []);
+  // 운임을 찾았거나 물량을 바꾸면 1년 운송비를 다시 계산(엔진)
+  useEffect(() => {
+    if (!out || out.status === 'unknown' || !Number(vol.n)) { setProj(null); return; }
+    let live = true;
+    const t = setTimeout(() => {
+      window.a2a.invoke('freight:project', { origin: f.origin, destination: f.destination, count: Number(vol.n), per: vol.per, container: f.container, cargo: f.cargo })
+        .then((d) => live && setProj(d), (x) => live && setErr(String(x.message || x)));
+    }, 250);
+    return () => { live = false; clearTimeout(t); };
+  }, [out, vol.n, vol.per]);
 
   const lanes = useMemo(() => (board?.lanes || []).filter((l) => pick.includes(l.code)).sort((a, b) => pick.indexOf(a.code) - pick.indexOf(b.code)), [board, pick]);
   const toggle = (code) => setPick((p) => (p.includes(code) ? (p.length > 1 ? p.filter((c) => c !== code) : p) : [p[p.length - 1], code].slice(-2)));
@@ -273,6 +335,7 @@ function Freight() {
         </form>
         {err && <div id="freight-error" className="mt-3 text-[13px] text-accent">{err}</div>}
 
+        {out && out.status !== 'unknown' && <Projection data={proj} vol={vol} setVol={setVol} />}
         {out && (
           <section id="freight-result" className="mt-5" data-status={out.status}>
             {out.reason && out.status === 'unknown' && <div id="freight-reason" className="rounded-lg bg-raise px-3 py-2.5 text-[13px]">{out.reason}</div>}
