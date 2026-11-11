@@ -757,7 +757,7 @@ test('n19-contacts-fill-in-as-found-real', async ({ cdp, EXT, Page }) => {
     channels: channels.length, liveUpdates: c.live, liveRows: c.liveRows, rows, events: c.events.length };
 });
 test('n20-drag-select-copy-and-search', async ({ cdp, EXT, Page, swEval, sleep }) => {
-  // 글을 끌어 고르면 노란 하이라이트 + 복사·검색 메뉴. 검색은 보던 화면을 두고 새 탭으로.
+  // 글을 끌어 고르면 노란 하이라이트 + 복사·검색 메뉴. 검색은 보던 탭에서 열리고 뒤로 가기로 돌아온다.
   const p = await Page.open(cdp, `${EXT}/contacts.html`);
   await p.waitFor("!!document.querySelector('#contacts h1')");
   const style = await p.eval(`(() => {
@@ -768,17 +768,36 @@ test('n20-drag-select-copy-and-search', async ({ cdp, EXT, Page, swEval, sleep }
     return { select: getComputedStyle(h).userSelect, mark: getComputedStyle(h, '::selection').backgroundColor, button: getComputedStyle(document.querySelector('#contact-find')).userSelect };
   })()`);
   const menu = await p.waitFor("!!document.querySelector('#selection-copy') && !!document.querySelector('#selection-search')", 4000).catch(() => null);
+  const before = (await swEval(cdp, 'chrome.tabs.query({})')).length;
   await p.eval("document.querySelector('#selection-search').click()");
-  let tabs = [], hit = [];
-  for (let i = 0; i < 12 && !hit.length; i++) {
-    await sleep(500);
-    tabs = await swEval(cdp, "chrome.tabs.query({}).then((x) => x.map((t) => ({ id: t.id, url: t.pendingUrl || t.url || '' })))");
-    hit = tabs.filter((t) => t.url.includes('google.') && t.url.includes(encodeURIComponent('접점')));
-  }
-  if (hit.length) await swEval(cdp, `chrome.tabs.remove(${JSON.stringify(hit.map((t) => t.id))})`);
-  const stayed = await p.eval("location.pathname === '/contacts.html' && !document.querySelector('#selection-menu')");
+  const went = await p.waitFor("location.hostname.includes('google.')", 15000).catch(() => null);
+  const after = (await swEval(cdp, 'chrome.tabs.query({})')).length;
+  await p.eval('history.back()').catch(() => {});
+  const back = await p.waitFor("location.pathname === '/contacts.html' && !!document.querySelector('#contacts h1')", 10000).catch(() => null);
   await p.close();
-  return { ok: !!menu && style.select !== 'none' && style.mark === 'rgb(255, 228, 92)' && style.button === 'none' && hit.length === 1 && stayed, style, menu: !!menu, searched: hit.length, urls: tabs.map((t) => t.url.slice(0, 80)) };
+  return { ok: !!menu && style.select !== 'none' && style.mark === 'rgb(255, 228, 92)' && style.button === 'none' && !!went && after === before && !!back, style, menu: !!menu, went: !!went, sameTab: after === before, back: !!back };
+});
+test('n21-split-view-from-the-app-menu', async ({ cdp, EXT, Page, swEval, sleep }) => {
+  // 맨 위 메뉴의 "분할 뷰" — 이 화면 옆에 탭을 나란히 열고, 다시 누르면 푼다. 고른 글은 옆 칸에서 검색한다.
+  const p = await Page.open(cdp, `${EXT}/contacts.html`);
+  await p.waitFor("!!document.querySelector('#nav-split') && !!document.querySelector('#contacts h1')");
+  const mine = "chrome.tabs.query({}).then((x) => { const me = x.find((t) => (t.url || '').endsWith('/contacts.html')); return { split: me?.splitViewId ?? -1, pair: x.filter((t) => me && t.splitViewId === me.splitViewId && t.splitViewId !== -1).map((t) => t.pendingUrl || t.url) }; })";
+  await p.eval("document.querySelector('#nav-split').click()");
+  await sleep(1500);
+  const on = await swEval(cdp, mine);
+  await p.eval(`(() => { const h = document.querySelector('#contacts h1'); const r = document.createRange(); r.selectNodeContents(h); const s = getSelection(); s.removeAllRanges(); s.addRange(r); h.dispatchEvent(new MouseEvent('mouseup', { bubbles: true })); })()`);
+  await p.waitFor("!!document.querySelector('#selection-split')", 4000).catch(() => null);
+  await p.eval("document.querySelector('#selection-split')?.click()");
+  let beside = { pair: [] };
+  for (let i = 0; i < 16 && !beside.pair.some((u) => u.includes('google.')); i++) { await sleep(500); beside = await swEval(cdp, mine); }
+  const kept = await p.eval("location.pathname === '/contacts.html'");
+  await p.eval("document.querySelector('#nav-split').click()");
+  await sleep(1500);
+  const off = await swEval(cdp, mine);
+  const extra = await swEval(cdp, "chrome.tabs.query({}).then((x) => x.filter((t) => (t.pendingUrl || t.url || '').includes('google.')).map((t) => t.id))");
+  if (extra.length) await swEval(cdp, `chrome.tabs.remove(${JSON.stringify(extra)})`);
+  await p.close();
+  return { ok: on.split !== -1 && on.pair.length === 2 && beside.pair.length === 2 && beside.pair.some((u) => u.includes('google.')) && kept && off.split === -1, on, beside, off };
 });
 test('n14-every-app-page-has-home-and-map', async ({ cdp, EXT, Page }) => {
   const seen = {};

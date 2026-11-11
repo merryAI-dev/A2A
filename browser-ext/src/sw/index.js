@@ -71,11 +71,44 @@ on('nav:go', async (raw, port) => {
   const url = looksUrl ? httpUrl(input) : searchUrl(input);
   if (url) open(url);
 });
-// 화면에서 끌어 고른 글 검색 — 보던 화면은 두고 새 탭으로
-on('search:text', (raw) => { const q = String(raw || '').trim().slice(0, 500); if (q) chrome.tabs.create({ url: searchUrl(q) }); });
+// 화면에서 끌어 고른 글 검색 — 여느 브라우저처럼 보던 탭에서 연다(뒤로 가기로 돌아온다).
+// 사이드 패널에서 고른 글은 패널 옆의 지금 탭에서 연다.
+on('search:text', async (raw, port) => {
+  const q = String(raw || '').trim().slice(0, 500);
+  if (!q) return;
+  const tabId = port?.sender?.tab?.id ?? (await chrome.tabs.query({ active: true, lastFocusedWindow: true }))[0]?.id;
+  if (tabId != null) chrome.tabs.update(tabId, { url: searchUrl(q) });
+  else chrome.tabs.create({ url: searchUrl(q) });
+});
 // 메리·학습의 근거 링크 — 새 탭으로
 on('bookmark:open', (url) => { const u = httpUrl(String(url || '')); if (u) chrome.tabs.create({ url: u }); });
 on('tab:new', (url) => chrome.tabs.create(typeof url === 'string' && /^https?:\/\//.test(url) ? { url } : {}));
+
+// ── 분할 뷰 — 한 창에 탭 둘을 나란히(Chromium의 분할 뷰 그대로: 탭 줄에서도 만들고 풀 수 있다) ──
+// 보낸 화면의 탭을 지금 상태로 다시 읽는다 — 연결할 때 받은 탭 정보는 나뉘기 전 것이다
+const senderTab = async (port) => {
+  const id = port?.sender?.tab?.id;
+  return (id != null ? await chrome.tabs.get(id).catch(() => null) : null) || (await chrome.tabs.query({ active: true, lastFocusedWindow: true }))[0] || null;
+};
+const inSplit = (t) => Number.isInteger(t?.splitViewId) && t.splitViewId !== chrome.tabs.SPLIT_VIEW_ID_NONE;
+// 옆 칸에 url을 연다 — 이미 나뉘어 있으면 옆 칸의 탭을 바꾸고, 아니면 새 탭을 옆에 붙인다
+async function openBeside(tab, url) {
+  if (!tab) return chrome.tabs.create(url ? { url } : {});
+  if (inSplit(tab)) {
+    const other = (await chrome.tabs.query({ windowId: tab.windowId })).find((t) => t.splitViewId === tab.splitViewId && t.id !== tab.id);
+    if (other) return url ? chrome.tabs.update(other.id, { url, active: true }) : other;
+  }
+  return chrome.tabs.create({ ...(url ? { url } : {}), splitWithTabId: tab.id });
+}
+on('split:toggle', async (port) => {
+  const tab = await senderTab(port);
+  if (inSplit(tab)) await chrome.tabs.unsplit(tab.splitViewId);
+  else await openBeside(tab, null);
+});
+on('search:split', async (raw, port) => {
+  const q = String(raw || '').trim().slice(0, 500);
+  if (q) await openBeside(await senderTab(port), searchUrl(q));
+});
 
 // ── 설정 ──
 on('prefs:set', async (key, value) => {
