@@ -26,7 +26,7 @@ const RISKY = new RegExp([
 ].join('|'), 'i');
 
 // 데이터 경계 — 웹페이지·팀원 글 안에 <page>·<chat>·<result> 태그 흉내가 있으면 무력화한다(경계를 못 빠져나가게)
-export const fence = (s) => String(s ?? '').replace(/<\s*\/?\s*(page|chat|result|ema|memory|facts|draft|contacts)\b/gi, (m) => m.replace('<', '‹'));
+export const fence = (s) => String(s ?? '').replace(/<\s*\/?\s*(page|chat|result|ema|memory|facts|draft|contacts|freight)\b/gi, (m) => m.replace('<', '‹'));
 
 const SYSTEM = `당신은 A2A 브라우저 안에서 일하는 에이전트입니다. A2A는 리드 발굴 팀이 쓰는 업무 공간이고,
 사용자는 오른쪽 사이드 패널에서 당신에게 일을 맡깁니다. 당신은 사용자가 지금 보고 있는 탭에서
@@ -44,7 +44,7 @@ const SYSTEM = `당신은 A2A 브라우저 안에서 일하는 에이전트입�
   채팅 답변에는 핵심 한두 줄과 "결과 페이지를 열었다"는 말만 남깁니다. 한 번 질문에 한두 줄로 끝나는 답이면 만들지 않습니다.
 - 밖으로 나갈 글(메일·메시지·제안 문구)은 직접 쓰지 말고 write_text로 씁니다. 도구로 확인한 사실만 출처와 함께 facts에 담고,
   모르는 것(받는 주소, 프로그램 내용 등)은 blanks에 둡니다. 돌려받은 초안을 그대로 쓰고, 사실 검사에서 남은 의심이 있으면 사용자에게 알립니다.
-- 투자 건 검토·투자심사보고서는 우리 화면 '메리'(투자 딜룸)에서 합니다. 그런 요청이면 open_app으로 메리를 열고, 거기서 투자 건을 만들어 자료를 올리면 메리가 근거를 뽑아 보고서를 함께 쓴다고 안내합니다. 접점 찾기·학습·업무 지도(온톨로지)도 open_app으로 엽니다.
+- 투자 건 검토·투자심사보고서는 우리 화면 '메리'(투자 딜룸)에서 합니다. 그런 요청이면 open_app으로 메리를 열고, 거기서 투자 건을 만들어 자료를 올리면 메리가 근거를 뽑아 보고서를 함께 쓴다고 안내합니다. 접점 찾기·해상 운임·학습·업무 지도(온톨로지)도 open_app으로 엽니다.
 - 끝나면 무엇을 했고 무엇을 찾았는지 짧게 한국어로 보고합니다. 출처 URL을 붙입니다.
 
 안전 규칙 (반드시)
@@ -71,7 +71,7 @@ const TOOLS = [
   { name: 'go_back', description: '현재 탭에서 뒤로 간다.', input_schema: S({}, []) },
   { name: 'new_tab', description: '새 탭을 열고 그 탭으로 전환한다.',
     input_schema: S({ url: { type: 'string' } }, ['url']) },
-  { name: 'open_app', description: 'A2A의 우리 화면(메리=투자 딜룸, 접점 찾기=회사 메일 찾기, 학습, 업무 지도=온톨로지)을 새 탭으로 연다. 지금 일하는 탭은 그대로 둔다.',
+  { name: 'open_app', description: 'A2A의 우리 화면(메리=투자 딜룸, 접점 찾기=회사 메일 찾기, 해상 운임=부산발 컨테이너 운임 지수, 학습, 업무 지도=온톨로지)을 새 탭으로 연다. 지금 일하는 탭은 그대로 둔다.',
     input_schema: S({ app: { type: 'string', enum: ['메리', '접점 찾기', '학습', '업무 지도'] } }, ['app']) },
   { name: 'list_tabs', description: '열린 탭 목록(id, 제목, URL)을 본다.', input_schema: S({}, []) },
   { name: 'switch_tab', description: '다른 탭으로 전환한다.',
@@ -106,6 +106,12 @@ const TOOLS = [
       facts: { type: 'array', items: { type: 'object' } }, blanks: { type: 'array', items: { type: 'string' } },
       tone: { type: 'string' }, length: { type: 'string' },
     }, ['kind', 'audience', 'goal', 'facts']) },
+  { name: 'ocean_freight_rate', description: '한국(부산)에서 해외로 컨테이너를 보낼 때 지금의 해상 운임 수준을 엔진이 공개 지수(한국해양진흥공사 KCCI, 매주 월요일 공표)에서 읽어 온다. 지금 열린 탭과 무관하고, 사이트를 열 필요가 없다. '
+      + '값은 구간(항로) 평균 지수(USD/FEU=40피트 한 대)이지 선사·포워더의 견적이 아니다 — 답할 때 "지수 기준 시세"라고 말하고 기준일(as_of)과 출처를 반드시 함께 전할 것. 부대비용(THC·서류비)·내륙 운송·통관·보험은 들어 있지 않다. '
+      + 'status가 ambiguous면 후보 항로를 모두 보여 주고 도착 항구를 물을 것. unknown이면 이유를 그대로 전하고 숫자를 지어내지 말 것(20피트·냉동·LCL·한국 밖 출발은 이 출처에 없다 — 40피트 값을 나누거나 곱해 추정하지 말 것). '
+      + 'origin·destination은 나라 코드(KR, IT)나 항구 코드(KRPUS, ITGOA)가 가장 정확하고, 흔한 나라·항구 이름도 받는다. cargo는 화물 종류(기록·주의 문구용).',
+    input_schema: S({ origin: { type: 'string' }, destination: { type: 'string' },
+                      container: { type: 'string' }, cargo: { type: 'string' } }, ['origin', 'destination']) },
   { name: 'find_contacts', description: '회사 도메인을 주면 엔진이 그 회사의 공개 페이지 최대 12장(메뉴·sitemap·문의/소개/제휴류)을 직접 읽어 법인 메일을 발굴·검증하고(출처 포함), 그 회사의 공식 채널(SNS·블로그 계정)도 함께 찾는다 — 채널은 linked(홈페이지가 링크함)만 공식으로 말하고, same_name은 이름만 같은 계정이라 확인이 필요하다고 전할 것. 지금 열린 탭과 무관하고, 먼저 사이트를 열 필요가 없다. 같은 도메인을 다시 불러도 결과는 같다. '
       + 'found=페이지에서 실제로 본 주소, pattern=이름+패턴 추측 — 둘을 섞어 말하지 말 것. 사람 이름(로마자)을 알면 person_first/person_last를 준다.',
     input_schema: S({ domain: { type: 'string' }, company: { type: 'string' },
@@ -322,7 +328,7 @@ export class Agent {
     const tab = tabId != null ? await chrome.tabs.get(tabId).catch(() => null) : null;
     const url = () => chrome.tabs.get(tabId).then((t) => t.url || t.pendingUrl || '', () => '');
     const title = () => chrome.tabs.get(tabId).then((t) => t.title || '', () => '');
-    const needPage = !['navigate', 'new_tab', 'open_app', 'list_tabs', 'switch_tab', 'create_page', 'list_channels', 'post_to_channel', 'find_contacts'].includes(name);
+    const needPage = !['navigate', 'new_tab', 'open_app', 'list_tabs', 'switch_tab', 'create_page', 'list_channels', 'post_to_channel', 'find_contacts', 'ocean_freight_rate'].includes(name);
     if (needPage && !tab) return '작업할 탭이 없습니다 — new_tab으로 여세요';
     if (needPage && name !== 'go_back' && !tools.scriptable(tab.url)) {
       return '빈 탭(새 탭)입니다 — navigate로 알맞은 페이지부터 여세요';
@@ -416,6 +422,9 @@ export class Agent {
       case 'find_contacts': {
         return h.findContacts(input);      // tasks.js — 엔진 조회 + 업무 기록(근거)
       }
+      case 'ocean_freight_rate': {
+        return h.freightRate(input);       // tasks.js — 엔진 조회 + 업무 기록(근거)
+      }
       case 'post_to_channel': {
         const nm = input.channel.replace(/^#/, '');
         const ch = (await h.chat.channels()).find((c) => c.name === nm);
@@ -464,6 +473,10 @@ Agent.prototype.execReplay = async function execReplay(name, input) {
     case 'find_contacts': {
       const rec = r.engineResult?.();
       return rec ? `<contacts>\n(재현: 그때 기록된 결과)\n${fence(rec)}\n</contacts>` : '재현: 기록된 결과 없음';
+    }
+    case 'ocean_freight_rate': {
+      const rec = r.engineResult?.();
+      return rec ? `<freight>\n(재현: 그때 기록된 결과 — 지금 시세가 아님)\n${fence(rec)}\n</freight>` : '재현: 기록된 결과 없음';
     }
     case 'create_page': { await h.createPage(input); return `결과 페이지(재현): "${input.title}"`; }
     case 'list_channels': {

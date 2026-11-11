@@ -25,6 +25,9 @@
   --color-ok: #21a366;
   --color-warn: #c98412;
   --color-info: #3d6fe0;
+  /* 시세가 오름·내림 — 한국 시세 화면의 관례(오르면 빨강, 내리면 파랑). 숫자의 변화량에만 쓴다 */
+  --color-up: #e0383e;
+  --color-down: #2f6fed;
   --font-sans: -apple-system, BlinkMacSystemFont, "Pretendard", "Apple SD Gothic Neo", system-ui, sans-serif;
   --font-mono: "SF Mono", ui-monospace, Menlo, monospace;
   --animate-twinkle: twinkle 1.6s ease-in-out infinite;

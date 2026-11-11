@@ -658,7 +658,7 @@ test('n7-ema-callback-caught-from-tab', async ({ swEval, cdp, Page }) => {
 });
 test('n8-tools-include-write-text-and-contacts-no-tab', async ({ swEval, cdp }) => {
   const names = await swEval(cdp, "globalThis.a2a.makeAgent().toolList().map((t) => t.name)");
-  return { ok: names.includes('write_text') && names.includes('find_contacts'), names };
+  return { ok: names.includes('write_text') && names.includes('find_contacts') && names.includes('ocean_freight_rate'), names };
 });
 test('n9-bare-names-open-our-pages', async ({ cdp, Page }) => {
   const p = await Page.open(cdp, 'chrome://newtab/');
@@ -727,6 +727,53 @@ test('n18-merry-writes-in-parts-real', async ({ cdp, EXT, Page, sleep }) => {
   return { ok: !!sec && sec.status !== 'draft' && sec.html.length > 200 && parts >= 2 && m.drafts > parts && !err.length,
     status: sec?.status, chars: sec?.html?.length, parts, drafts: m.drafts, asks: m.asks, err, steps: m.steps.slice(0, 12) };
 });
+// 실제 출처(KOBC KCCI) — 해상 운임 화면이 이름으로 열리고, 숫자에 기준일·출처·'견적 아님'이 함께 붙는지.
+// A2A_ENGINE을 주면 그 엔진으로 묻는다(다른 작업 폴더의 엔진이 8423 뒤에 떠 있을 때).
+test('n20-freight-korea-to-italy-real', async ({ cdp, Page, swEval }) => {
+  const home = await Page.open(cdp, 'chrome://newtab/');
+  await home.waitFor("!!document.querySelector('#ask')");
+  await home.eval("window.a2a.send('nav:go', '운임')");
+  const opened = await home.waitFor("location.pathname === '/freight.html'", 8000).catch(() => null);
+  const p = home;
+  await p.waitFor("!!document.querySelector('#freight-destination') && !!window.a2a");
+  await p.eval(`(() => { const i = document.querySelector('#freight-destination');
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(i, '이탈리아');
+    i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  await p.waitFor("!document.querySelector('#freight-find').disabled");
+  if (process.env.A2A_ENGINE) await swEval(cdp, `globalThis.a2a.engineAt(${JSON.stringify(process.env.A2A_ENGINE)})`);   // 화면이 붙은 뒤 — 워커가 깨어 있을 때
+  await p.eval("document.querySelector('#freight-find').click()");
+  const done = await p.waitFor("!!document.querySelector('#freight-result') || !!document.querySelector('#freight-error')", 30000).catch(() => null);
+  const r = await p.eval(`(() => { const q = (s) => document.querySelector(s)?.innerText || ''; return {
+    status: document.querySelector('#freight-result')?.dataset.status, lane: document.querySelector('.freight-lane')?.dataset.lane,
+    rate: q('.freight-rate'), asof: q('.freight-asof'), change: q('.freight-change'), source: q('#freight-source'),
+    spark: !!document.querySelector('.freight-spark polyline'), error: q('#freight-error') }; })()`);
+  await p.shot('n20-freight.png', { width: 1200, height: 860 });
+  await p.close();
+  return { ok: !!opened && !!done && r.status === 'ok' && r.lane === 'KMDI' && /^\$\d{1,2},\d{3}$/.test(r.rate) && /기준일 \d{4}-\d{2}-\d{2}/.test(r.asof)
+      && r.source.includes('견적이 아니에요') && r.source.includes('한국해양진흥공사') && r.source.includes('kobc.or.kr') && r.spark, ...r };
+});
+// 이 출처로 답할 수 없는 물음엔 숫자 없이 이유만 — 부산 출발이 아니면 모른다고 한다
+test('n21-freight-says-unknown-without-a-number', async ({ cdp, EXT, Page, swEval }) => {
+  if (process.env.A2A_ENGINE) await swEval(cdp, `globalThis.a2a.engineAt(${JSON.stringify(process.env.A2A_ENGINE)})`);
+  const p = await Page.open(cdp, `${EXT}/freight.html`);
+  await p.waitFor("!!document.querySelector('#freight-destination') && !!window.a2a");
+  const d = await p.eval("window.a2a.invoke('freight:ocean', { origin: '상하이', destination: 'IT', container: '40' })");
+  const us = await p.eval("window.a2a.invoke('freight:ocean', { origin: 'KR', destination: '미국', container: '20' })");
+  await p.close();
+  return { ok: d.status === 'unknown' && d.lanes.length === 0 && d.reason.includes('부산 출발')
+      && us.status === 'ambiguous' && us.lanes.map((l) => l.code).join() === 'KUWI,KUEI' && us.notes.some((n) => n.includes('절반이 아닙니다')),
+    reason: d.reason, us: us.reason };
+});
+// 에이전트 도구 — 탭 없이도 돌고, 모델에게 가는 글에 기준일·출처·'견적 아님'이 실려 있는지(화면과 같은 엔진 경로)
+test('n22-agent-freight-tool-carries-date-and-source', async ({ cdp, EXT, Page, swEval }) => {
+  const p = await Page.open(cdp, `${EXT}/freight.html`);
+  await p.waitFor('!!window.a2a');
+  if (process.env.A2A_ENGINE) await swEval(cdp, `globalThis.a2a.engineAt(${JSON.stringify(process.env.A2A_ENGINE)})`);
+  const text = await swEval(cdp, "globalThis.a2a.makeAgent().exec('ocean_freight_rate', { origin: 'KR', destination: 'ITGOA', container: '40', cargo: '가구' })");
+  await p.close();
+  return { ok: /^<freight>/.test(text) && /지중해\(KMDI Mediterranean\): \$\d{1,2},\d{3} \/ 40피트 1대\(FEU\) · 기준일 \d{4}-\d{2}-\d{2}/.test(text)
+      && text.includes('견적 아님') && text.includes('한국해양진흥공사') && text.includes('kobc.or.kr') && text.includes('포함 안 됨'), text: text.slice(0, 700) };
+});
 // 실제 사이트 — 접점 찾기가 끝까지 기다리게 하지 않고, 읽는 대로 진행과 주소를 화면에 올리는지
 test('n19-contacts-fill-in-as-found-real', async ({ cdp, EXT, Page }) => {
   const p = await Page.open(cdp, `${EXT}/contacts.html`);
@@ -758,7 +805,7 @@ test('n19-contacts-fill-in-as-found-real', async ({ cdp, EXT, Page }) => {
 });
 test('n14-every-app-page-has-home-and-map', async ({ cdp, EXT, Page }) => {
   const seen = {};
-  for (const page of ['merry', 'contacts', 'learn', 'map']) {
+  for (const page of ['merry', 'contacts', 'freight', 'learn', 'map']) {
     const p = await Page.open(cdp, `${EXT}/${page}.html`);
     seen[page] = !!(await p.waitFor("!!document.querySelector('#nav-home') && !!document.querySelector('[data-app=map]')", 6000).catch(() => null));
     await p.close();
@@ -779,7 +826,7 @@ test('n15-home-button-returns-from-app', async ({ cdp, EXT, Page, swEval, sleep 
 test('n16-home-uses-the-shared-app-menu', async ({ cdp, Page }) => {
   // 홈에도 같은 맨 위 메뉴 하나 — 앱 목록을 사이드바에 또 두지 않는다
   const p = await Page.open(cdp, 'chrome://newtab/');
-  const ok = await p.waitFor("!!document.querySelector('#ask') && ['merry','contacts','learn','map'].every((a) => document.querySelectorAll(`[data-app=${a}]`).length === 1) && !document.querySelector('#home-sidebar')", 6000).catch(() => null);
+  const ok = await p.waitFor("!!document.querySelector('#ask') && ['merry','contacts','freight','learn','map'].every((a) => document.querySelectorAll(`[data-app=${a}]`).length === 1) && !document.querySelector('#home-sidebar')", 6000).catch(() => null);
   await p.close();
   return { ok: !!ok };
 });
